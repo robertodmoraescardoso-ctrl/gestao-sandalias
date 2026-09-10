@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { NavLink, Routes, Route, Navigate } from 'react-router-dom'
-import { supabaseConfigured } from './lib/supabaseClient'
+import { supabase, supabaseConfigured } from './lib/supabaseClient'
+import Login from './components/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Compras from './pages/Compras.jsx'
 import Estoque from './pages/Estoque.jsx'
@@ -19,6 +21,21 @@ const nav = [
 ]
 
 export default function App() {
+  const [session, setSession] = useState(undefined) // undefined = carregando
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
+    return () => sub.subscription.unsubscribe()
+  }, [])
+
+  if (session === undefined) {
+    return <div className="min-h-screen flex items-center justify-center text-ink/40 text-sm">Carregando…</div>
+  }
+  if (!session) return <Login />
+
+  const email = session.user?.email
+
   return (
     <div className="min-h-screen flex bg-canvas">
       <aside className="w-56 shrink-0 bg-ink text-white/90 flex flex-col">
@@ -30,24 +47,19 @@ export default function App() {
         </div>
         <nav className="flex-1 py-3">
           {nav.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.end}
+            <NavLink key={n.to} to={n.to} end={n.end}
               className={({ isActive }) =>
                 `block px-5 py-2.5 text-sm transition-colors ${
-                  isActive
-                    ? 'bg-white/10 text-white border-l-2 border-sand'
-                    : 'text-white/60 hover:text-white hover:bg-white/5 border-l-2 border-transparent'
-                }`
-              }
-            >
+                  isActive ? 'bg-white/10 text-white border-l-2 border-sand'
+                  : 'text-white/60 hover:text-white hover:bg-white/5 border-l-2 border-transparent'}`}>
               {n.label}
             </NavLink>
           ))}
         </nav>
-        <div className="px-5 py-4 text-[11px] text-white/35 border-t border-white/10">
-          {supabaseConfigured ? 'Conectado ao Supabase' : 'Configure o .env'}
+        <div className="px-5 py-4 border-t border-white/10">
+          <div className="text-[11px] text-white/40 mb-2 truncate">{email}</div>
+          <button onClick={() => supabase.auth.signOut()}
+            className="text-[12px] text-white/60 hover:text-white">Sair</button>
         </div>
       </aside>
 
