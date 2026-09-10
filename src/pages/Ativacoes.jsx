@@ -5,6 +5,7 @@ import { Page, PageHeader, Card, Button, Badge, Kpi, Field, inputCls, Empty } fr
 import Modal from '../components/Modal.jsx'
 
 const tipoBadge = { doacao: ['amarelo', 'Doação'], pagamento: ['azul', 'Pagamento'], misto: ['verde', 'Misto'] }
+const custoUnit = (p) => (Number(p?.custo_produto) || 0) + (Number(p?.custo_frete) || 0) + (Number(p?.custo_embalagem) || 0)
 
 export default function Ativacoes() {
   const [rows, setRows] = useState([])
@@ -13,23 +14,24 @@ export default function Ativacoes() {
 
   const load = async () => {
     const { data } = await supabase.from('ativacoes')
-      .select('*, ativacao_itens(*, produtos(nome, custo_medio))')
+      .select('*, ativacao_itens(*, produtos(nome, custo_produto, custo_frete, custo_embalagem))')
       .order('data', { ascending: false })
     setRows(data || [])
   }
   useEffect(() => {
     load()
-    supabase.from('produtos').select('*').eq('ativo', true).order('nome').then(({ data }) => setProdutos(data || []))
+    supabase.from('produtos').select('id, nome, tamanhos, custo_produto, custo_frete, custo_embalagem')
+      .eq('ativo', true).order('nome').then(({ data }) => setProdutos(data || []))
   }, [])
 
-  const custoDoacao = (a) => (a.ativacao_itens || []).reduce((s, i) => s + i.quantidade * (i.produtos?.custo_medio || 0), 0)
+  const custoDoacao = (a) => (a.ativacao_itens || []).reduce((s, i) => s + i.quantidade * custoUnit(i.produtos), 0)
   const custoTotal = (a) => Number(a.valor_pago || 0) + custoDoacao(a)
   const totalGeral = rows.reduce((s, a) => s + custoTotal(a), 0)
 
   return (
     <Page>
       <PageHeader title="Ativações / Marketing"
-        subtitle="Doação de sandálias e pagamento a influenciadores. Doações saem do estoque como marketing, não como venda."
+        subtitle="Doação de sandálias e pagamento a influenciadores. Doação sai do estoque da loja como marketing."
         right={<Button onClick={() => setOpen(true)}>Nova ativação</Button>} />
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
@@ -42,9 +44,8 @@ export default function Ativacoes() {
         {rows.length === 0 ? <Empty>Nenhuma ativação registrada.</Empty> : (
           <table className="w-full text-sm">
             <thead><tr className="text-left text-ink/45 text-xs border-b border-borda">
-              <th className="py-2 pr-3">Data</th><th className="py-2 px-3">Ativação</th>
-              <th className="py-2 px-3">Tipo</th><th className="py-2 px-3">Beneficiário</th>
-              <th className="py-2 px-3">Cupom</th><th className="py-2 px-3 text-right">Custo total</th>
+              <th className="py-2 pr-3">Data</th><th className="py-2 px-3">Ativação</th><th className="py-2 px-3">Tipo</th>
+              <th className="py-2 px-3">Beneficiário</th><th className="py-2 px-3">Cupom</th><th className="py-2 px-3 text-right">Custo total</th>
             </tr></thead>
             <tbody>{rows.map((a) => {
               const [tone, label] = tipoBadge[a.tipo] || ['neutro', a.tipo]
@@ -68,14 +69,13 @@ export default function Ativacoes() {
   )
 }
 
+function tamanhosDe(p) { return Array.isArray(p?.tamanhos) ? p.tamanhos : [] }
+
 function NovaAtivacao({ produtos, onClose, onSaved }) {
-  const [f, setF] = useState({
-    nome: '', tipo: 'misto', data: hoje(), beneficiario: '',
-    valor_pago: '', forma_pagamento: '', objetivo: '', cupom: '',
-  })
+  const [f, setF] = useState({ nome: '', tipo: 'misto', data: hoje(), beneficiario: '', valor_pago: '', forma_pagamento: '', objetivo: '', cupom: '' })
   const [itens, setItens] = useState([])
 
-  const addItem = () => setItens([...itens, { produto_id: '', quantidade: '' }])
+  const addItem = () => setItens([...itens, { produto_id: '', tamanho: '', quantidade: '' }])
   const setItem = (i, c, v) => setItens(itens.map((it, idx) => idx === i ? { ...it, [c]: v } : it))
   const rmItem = (i) => setItens(itens.filter((_, idx) => idx !== i))
 
@@ -87,10 +87,10 @@ function NovaAtivacao({ produtos, onClose, onSaved }) {
       objetivo: f.objetivo || null, cupom: f.cupom || null,
     }).select().single()
     if (error) return alert(error.message)
-    const validos = itens.filter((it) => it.produto_id && Number(it.quantidade) > 0)
+    const validos = itens.filter((it) => it.produto_id && it.tamanho && Number(it.quantidade) > 0)
     if (validos.length) {
       const { error: e2 } = await supabase.from('ativacao_itens').insert(
-        validos.map((it) => ({ ativacao_id: at.id, produto_id: it.produto_id, quantidade: Number(it.quantidade) }))
+        validos.map((it) => ({ ativacao_id: at.id, produto_id: Number(it.produto_id), tamanho: it.tamanho, quantidade: Number(it.quantidade) }))
       )
       if (e2) return alert(e2.message)
     }
@@ -121,24 +121,29 @@ function NovaAtivacao({ produtos, onClose, onSaved }) {
             <Field label="Forma de pagamento"><input className={inputCls} value={f.forma_pagamento} onChange={(e) => setF({ ...f, forma_pagamento: e.target.value })} /></Field>
           </div>
         )}
-
         {f.tipo !== 'pagamento' && (
           <div className="border border-borda rounded-md p-3 space-y-2">
-            <div className="text-xs text-ink/50">Sandálias doadas (saem do estoque como marketing)</div>
-            {itens.map((it, i) => (
-              <div key={i} className="grid grid-cols-[1fr,80px,32px] gap-2 items-center">
-                <select className={inputCls} value={it.produto_id} onChange={(e) => setItem(i, 'produto_id', e.target.value)}>
-                  <option value="">Produto…</option>
-                  {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome} (est. {p.estoque_atual})</option>)}
-                </select>
-                <input className={inputCls} type="number" placeholder="Qtd" value={it.quantidade} onChange={(e) => setItem(i, 'quantidade', e.target.value)} />
-                <button className="text-ink/30 hover:text-alerta" onClick={() => rmItem(i)}>×</button>
-              </div>
-            ))}
+            <div className="text-xs text-ink/50">Sandálias doadas (saem do estoque da loja)</div>
+            {itens.map((it, i) => {
+              const prod = produtos.find((p) => String(p.id) === String(it.produto_id))
+              return (
+                <div key={i} className="grid grid-cols-[1fr,100px,70px,28px] gap-2 items-center">
+                  <select className={inputCls} value={it.produto_id} onChange={(e) => setItem(i, 'produto_id', e.target.value)}>
+                    <option value="">Produto…</option>
+                    {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  </select>
+                  <select className={inputCls} value={it.tamanho} onChange={(e) => setItem(i, 'tamanho', e.target.value)}>
+                    <option value="">Tam…</option>
+                    {tamanhosDe(prod).map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <input className={inputCls} type="number" placeholder="Qtd" value={it.quantidade} onChange={(e) => setItem(i, 'quantidade', e.target.value)} />
+                  <button className="text-ink/30 hover:text-alerta" onClick={() => rmItem(i)}>×</button>
+                </div>
+              )
+            })}
             <button className="text-sm text-esmeralda" onClick={addItem}>+ adicionar sandália</button>
           </div>
         )}
-
         <Field label="Objetivo / observação"><input className={inputCls} value={f.objetivo} onChange={(e) => setF({ ...f, objetivo: e.target.value })} /></Field>
         <div className="flex justify-end gap-2"><Button variant="ghost" onClick={onClose}>Cancelar</Button><Button onClick={salvar}>Salvar ativação</Button></div>
       </div>

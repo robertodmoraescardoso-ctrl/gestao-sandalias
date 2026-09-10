@@ -45,7 +45,7 @@ export default function Dashboard() {
     <Page>
       <PageHeader
         title="Painel do gestor"
-        subtitle="O que comprei, o que recebi, o que vendi, quanto ganhei e quanto tenho a pagar."
+        subtitle="Vendas reais do site, estoque da loja, lucro e contas — tudo integrado."
         right={
           <div className="flex gap-1 bg-white border border-borda rounded-md p-1">
             {periodos.map((p) => (

@@ -1,77 +1,53 @@
 # Gestão Sandálias
 
-Painel de gestão para revenda de sandálias, integrando **Compras → Estoque → Vendas → Financeiro** num único fluxo. Frontend em React (Vite) e banco no Supabase (Postgres), com toda a lógica de integração implementada como triggers no banco.
+Painel de gestão para revenda de sandálias, integrando **Compras → Estoque → Vendas → Financeiro** num único fluxo. Toda a lógica de integração fica no banco (Supabase), então você nunca lança a mesma coisa duas vezes.
 
-## O que já vem pronto
-
-- **Painel do gestor**: faturamento, lucro bruto (Faturamento − CMV), lucro geral, contas vencidas, estoque, trânsito, top produtos e evolução das vendas, com filtro por período.
-- **Compras**: pedidos ao fornecedor com itens, status (realizado → confirmado → em trânsito → parcial → recebido) e **recebimento parcial ou total**.
-- **Estoque**: disponível, em trânsito, custo médio, valor em custo/potencial, giro, filtros de estoque baixo e parados.
-- **Vendas**: cada venda **baixa o estoque** e grava o **custo (CMV)** do momento automaticamente.
-- **Financeiro**: contas a pagar (criadas sozinhas no recebimento, com vencimento = recebimento + prazo do fornecedor), retiradas dos sócios (isoladas do resultado) e despesas.
-- **Ativações/Marketing**: doação de sandálias (sai do estoque como marketing, não como venda) e pagamento a influenciadores, com cupom para medir retorno.
-
-### Automações no banco (você nunca lança duas vezes)
-
-| Ação | O que dispara automaticamente |
-|---|---|
-| Receber um pedido | entra no estoque + recalcula custo médio + cria a conta a pagar |
-| Registrar uma venda | baixa o estoque + grava o CMV daquele item |
-| Doar em uma ativação | baixa o estoque como "saída por doação" (não vira faturamento) |
+> **Você não precisa instalar Node.js nem usar terminal.** O passo a passo abaixo publica o painel online usando só o navegador. A parte técnica (build) roda na nuvem.
 
 ---
 
-## Passo a passo
+## Passo a passo (sem terminal)
 
-### 1. Criar o projeto no Supabase
-1. Acesse [supabase.com](https://supabase.com) e crie um projeto (guarde a senha do banco).
-2. No projeto, vá em **SQL Editor** → **New query**.
-3. Cole todo o conteúdo de `supabase/migrations/0001_init.sql` e clique em **Run**.
-4. (Opcional) rode `supabase/seed.sql` da mesma forma para ter dados de exemplo.
-5. Vá em **Project Settings → API** e copie **Project URL** e a chave **anon public**.
+### 1. Banco de dados (Supabase) — provavelmente você já fez
+Se ainda não fez: no seu projeto Supabase, abra **SQL Editor**, cole o conteúdo de `supabase/migrations/0001_init.sql` e clique em **Run**. Depois copie, em **Project Settings -> API**, a **Project URL** e a chave **anon public** (vamos usar no passo 3).
 
-### 2. Configurar e rodar o frontend
-```bash
-npm install
-cp .env.example .env
-# edite o .env com a URL e a anon key do passo anterior
-npm run dev
-```
-Abra o endereço que o Vite mostrar (normalmente `http://localhost:5173`).
+### 2. Subir o projeto no GitHub (arrastando arquivos)
+1. Crie uma conta em github.com se não tiver.
+2. Clique em **New repository**, dê um nome (ex.: gestao-sandalias) e clique em **Create repository**.
+3. Na página do repositório vazio, clique em **Add file -> Upload files**.
+4. **Descompacte** o gestao-sandalias.zip no seu computador, abra a pasta e **arraste todos os arquivos e pastas de dentro dela** para a área de upload do GitHub.
+5. Clique em **Commit changes**. Pronto, o código está no GitHub.
 
-Primeiro uso: cadastre **fornecedores** e **produtos** (aba Cadastros), depois lance um **pedido de compra**, faça o **recebimento** e você verá o estoque e a conta a pagar aparecerem sozinhos.
+> Importante: arraste o **conteúdo** da pasta (os arquivos package.json, index.html, a pasta src, etc.), nao a pasta gestao-sandalias inteira.
 
-### 3. Subir no GitHub
-```bash
-git init
-git add .
-git commit -m "Sistema de gestão de sandálias"
-git branch -M main
-git remote add origin https://github.com/SEU-USUARIO/gestao-sandalias.git
-git push -u origin main
-```
-O `.gitignore` já evita subir `node_modules` e o `.env` (suas chaves ficam fora do repositório).
+### 3. Publicar online (Vercel) — gera o link do painel
+1. Acesse vercel.com e entre com a sua conta do **GitHub**.
+2. Clique em **Add New -> Project** e escolha o repositório gestao-sandalias.
+3. A Vercel detecta que e um projeto Vite automaticamente. **Antes de clicar em Deploy**, abra **Environment Variables** e adicione as duas:
 
-### 4. (Opcional) Publicar online
-Importe o repositório na **Vercel** ou **Netlify**, defina as variáveis `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` no painel do serviço e faça o deploy. Comando de build: `npm run build`, pasta de saída: `dist`.
+   | Name | Value |
+   |---|---|
+   | VITE_SUPABASE_URL | sua Project URL do Supabase |
+   | VITE_SUPABASE_ANON_KEY | sua chave anon public |
+
+4. Clique em **Deploy**. Em cerca de 1 minuto a Vercel te da um link (ex.: gestao-sandalias.vercel.app). Esse e o seu painel, acessivel de qualquer lugar, inclusive do celular.
+
+Sempre que quiser mudar algo, e so editar/subir os arquivos no GitHub que a Vercel republica sozinha.
+
+### 4. Primeiro uso (a ordem importa)
+No painel: **Cadastros** (fornecedor + produtos) -> **Compras** (criar pedido e clicar em Receber) -> **Vendas** (registrar venda) -> **Painel** mostra os numeros. Ao receber um pedido o estoque e a conta a pagar aparecem sozinhos; ao vender, o estoque baixa e o custo e gravado.
 
 ---
 
-## Segurança
-
-A migração habilita RLS com uma política permissiva (`using (true)`) para funcionar como ferramenta de usuário único com a chave anon. **Antes de expor publicamente**, adicione autenticação (Supabase Auth) e restrinja as políticas ao seu usuário. A `anon key` pode ir para o frontend; a `service_role key` **nunca**.
+## Seguranca (leia antes de usar pra valer)
+O banco vem com uma politica permissiva para funcionar como ferramenta de um usuario so. Quem tiver o link e a chave anon consegue ler/gravar. Para uso pessoal e privado esta ok; se for expor a mais pessoas, adicione **login (Supabase Auth)** e restrinja o acesso. A chave **anon** pode ficar no site; a chave **service_role** nunca.
 
 ## Estrutura
 ```
-supabase/migrations/0001_init.sql  → schema, triggers, views e funções
-supabase/seed.sql                  → dados de exemplo (opcional)
-src/pages/                         → Painel, Compras, Estoque, Vendas, Financeiro, Ativações, Cadastros
-src/components/                    → UI reutilizável
-src/lib/                           → cliente Supabase e formatação
+supabase/migrations/0001_init.sql  -> schema, triggers, views e funcoes do banco
+supabase/seed.sql                  -> dados de exemplo (opcional)
+src/pages/                         -> Painel, Compras, Estoque, Vendas, Financeiro, Ativacoes, Cadastros
 ```
 
-## Próximos passos sugeridos (não implementados ainda)
-- Estoque reservado (venda com entrega futura)
-- Retorno por cupom nas ativações (ROI por influenciador)
-- Curva ABC e comparação automática entre períodos
-- Autenticação e políticas RLS por usuário
+## Proximos passos possiveis (nao incluidos ainda)
+Estoque reservado, retorno por cupom nas ativacoes (ROI por influenciador), curva ABC, comparacao entre periodos e login por usuario.
