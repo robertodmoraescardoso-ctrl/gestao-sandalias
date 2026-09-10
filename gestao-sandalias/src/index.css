@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: #F6F5F1;
+  color: #151A21;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* números tabulares para valores financeiros */
+.tnum { font-variant-numeric: tabular-nums; }
+
+table { border-collapse: collapse; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #d6d4cc; border-radius: 6px; }
