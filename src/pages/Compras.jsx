@@ -18,6 +18,7 @@ export default function Compras() {
   const [produtos, setProdutos] = useState([])
   const [novo, setNovo] = useState(false)
   const [receber, setReceber] = useState(null)
+  const [editar, setEditar] = useState(null)
 
   const load = async () => {
     const { data } = await supabase
@@ -65,7 +66,8 @@ export default function Compras() {
                     <td className="py-2 px-3 text-right tnum">{brl(totalPedido(p))}</td>
                     <td className="py-2 px-3 text-right tnum">{num(pendentePedido(p))} pç</td>
                     <td className="py-2 px-3"><Badge tone={tone}>{label}</Badge></td>
-                    <td className="py-2 pl-3 text-right">
+                    <td className="py-2 pl-3 text-right whitespace-nowrap">
+                      <button type="button" onClick={() => setEditar(p)} className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5 mr-1">Editar</button>
                       {pendentePedido(p) > 0 && p.status !== 'cancelado' && (
                         <Button variant="ghost" onClick={() => setReceber(p)}>Receber</Button>
                       )}
@@ -79,6 +81,7 @@ export default function Compras() {
       </Card>
 
       {novo && <NovoPedido fornecedores={fornecedores} produtos={produtos} onClose={() => setNovo(false)} onSaved={() => { setNovo(false); load() }} />}
+      {editar && <EditarPedido pedido={editar} fornecedores={fornecedores} produtos={produtos} onClose={() => setEditar(null)} onSaved={() => { setEditar(null); load() }} />}
       {receber && <Receber pedido={receber} onClose={() => setReceber(null)} onSaved={() => { setReceber(null); load() }} />}
     </Page>
   )
@@ -173,6 +176,134 @@ function NovoPedido({ fornecedores, produtos, onClose, onSaved }) {
         <div className="flex items-center justify-between pt-1">
           <span className="text-sm text-ink/60">Total: <b className="tnum">{brl(total)}</b></span>
           <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>Cancelar</Button><Button onClick={salvar}>Salvar pedido</Button></div>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+const STATUS_OPCOES = [
+  ['realizado', 'Realizado'],
+  ['confirmado', 'Confirmado'],
+  ['em_transito', 'Em trânsito'],
+  ['parcialmente_recebido', 'Parcialmente recebido'],
+  ['recebido', 'Recebido'],
+  ['cancelado', 'Cancelado'],
+]
+
+function EditarPedido({ pedido, fornecedores, produtos, onClose, onSaved }) {
+  const [forn, setForn] = useState(String(pedido.fornecedor_id || ''))
+  const [dataPedido, setDataPedido] = useState(pedido.data_pedido || hoje())
+  const [prevista, setPrevista] = useState(pedido.data_prevista || '')
+  const [prazo, setPrazo] = useState(pedido.prazo_pagamento_dias ?? 45)
+  const [status, setStatus] = useState(pedido.status)
+  const [obs, setObs] = useState(pedido.observacoes || '')
+  const [itens, setItens] = useState(
+    (pedido.pedido_compra_itens || [])
+      .slice().sort((a, b) => a.id - b.id)
+      .map((i) => ({
+        id: i.id, produto_id: String(i.produto_id), tamanho: i.tamanho || '',
+        quantidade: String(i.quantidade), preco_unitario: String(i.preco_unitario), recebida: i.quantidade_recebida || 0,
+      }))
+  )
+  const [removidos, setRemovidos] = useState([])
+  const [salvando, setSalvando] = useState(false)
+
+  const setItem = (i, campo, val) => setItens(itens.map((it, idx) => idx === i ? { ...it, [campo]: val } : it))
+  const addItem = () => setItens([...itens, { id: null, produto_id: '', tamanho: '', quantidade: '', preco_unitario: '', recebida: 0 }])
+  const rmItem = (i) => {
+    const it = itens[i]
+    if (it.recebida > 0) return alert('Este item já tem peças recebidas e não pode ser removido. Ajuste a quantidade, se precisar.')
+    if (it.id) setRemovidos([...removidos, it.id])
+    setItens(itens.filter((_, idx) => idx !== i))
+  }
+  const total = itens.reduce((s, it) => s + (Number(it.quantidade) || 0) * (Number(it.preco_unitario) || 0), 0)
+
+  const salvar = async () => {
+    const validos = itens.filter((it) => it.produto_id && it.tamanho && Number(it.quantidade) > 0)
+    if (!forn || validos.length === 0) return alert('Escolha o fornecedor e ao menos um item com tamanho.')
+    if (validos.length !== itens.length) return alert('Há itens incompletos (produto, tamanho e quantidade). Complete ou remova.')
+    setSalvando(true)
+    const { error } = await supabase.from('pedidos_compra').update({
+      fornecedor_id: Number(forn), data_pedido: dataPedido, data_prevista: prevista || null,
+      prazo_pagamento_dias: Number(prazo) || 45, status, observacoes: obs || null,
+    }).eq('id', pedido.id)
+    if (error) { setSalvando(false); return alert(error.message) }
+
+    for (const id of removidos) {
+      const { error: e } = await supabase.from('pedido_compra_itens').delete().eq('id', id)
+      if (e) { setSalvando(false); return alert(e.message) }
+    }
+    for (const it of itens) {
+      const dados = {
+        produto_id: Number(it.produto_id), tamanho: it.tamanho,
+        quantidade: Number(it.quantidade), preco_unitario: Number(it.preco_unitario) || 0,
+      }
+      const { error: e } = it.id
+        ? await supabase.from('pedido_compra_itens').update(dados).eq('id', it.id)
+        : await supabase.from('pedido_compra_itens').insert({ ...dados, pedido_id: pedido.id })
+      if (e) { setSalvando(false); return alert(e.message) }
+    }
+    setSalvando(false)
+    onSaved()
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Editar pedido de compra" width="max-w-2xl">
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Fornecedor">
+            <select className={inputCls} value={forn} onChange={(e) => setForn(e.target.value)}>
+              {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
+            </select>
+          </Field>
+          <Field label="Status">
+            <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
+              {STATUS_OPCOES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Data do pedido"><input type="date" className={inputCls} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></Field>
+          <Field label="Previsão de entrega"><input type="date" className={inputCls} value={prevista} onChange={(e) => setPrevista(e.target.value)} /></Field>
+          <Field label="Prazo pagto (dias)"><input type="number" className={inputCls} value={prazo} onChange={(e) => setPrazo(e.target.value)} /></Field>
+        </div>
+        <Field label="Observações"><input className={inputCls} value={obs} onChange={(e) => setObs(e.target.value)} /></Field>
+
+        <div className="border border-borda rounded-md p-3 space-y-2">
+          <div className="text-xs text-ink/50">Itens (por tamanho)</div>
+          {itens.map((it, i) => {
+            const prod = produtos.find((p) => String(p.id) === String(it.produto_id))
+            const tams = tamanhosDe(prod)
+            const tamOpcoes = it.tamanho && !tams.includes(it.tamanho) ? [it.tamanho, ...tams] : tams
+            return (
+              <div key={it.id ?? 'n' + i} className="grid grid-cols-[1fr,100px,70px,100px,28px] gap-2 items-center">
+                <select className={inputCls} value={it.produto_id} onChange={(e) => setItem(i, 'produto_id', e.target.value)}>
+                  <option value="">Produto…</option>
+                  {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  {it.produto_id && !prod && <option value={it.produto_id}>Produto #{it.produto_id}</option>}
+                </select>
+                <select className={inputCls} value={it.tamanho} onChange={(e) => setItem(i, 'tamanho', e.target.value)}>
+                  <option value="">Tam…</option>
+                  {tamOpcoes.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input className={inputCls} type="number" min={it.recebida || 0} placeholder="Qtd" value={it.quantidade} onChange={(e) => setItem(i, 'quantidade', e.target.value)} />
+                <input className={inputCls} type="number" step="0.01" placeholder="Custo un." value={it.preco_unitario} onChange={(e) => setItem(i, 'preco_unitario', e.target.value)} />
+                <button type="button" className="text-ink/30 hover:text-alerta" onClick={() => rmItem(i)}>×</button>
+              </div>
+            )
+          })}
+          <button type="button" className="text-sm text-esmeralda" onClick={addItem}>+ adicionar item</button>
+        </div>
+
+        <p className="text-xs text-ink/45">
+          Atenção: editar o pedido não altera o estoque nem as contas a pagar já geradas por recebimentos anteriores.
+          Se mudar quantidade ou custo de itens já recebidos, ajuste o estoque e o Financeiro manualmente.
+        </p>
+
+        <div className="flex items-center justify-between pt-1">
+          <span className="text-sm text-ink/60">Total: <b className="tnum">{brl(total)}</b></span>
+          <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>Cancelar</Button><Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar alterações'}</Button></div>
         </div>
       </div>
     </Modal>

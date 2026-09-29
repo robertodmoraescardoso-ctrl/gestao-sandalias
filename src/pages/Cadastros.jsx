@@ -16,46 +16,86 @@ export default function Cadastros() {
   )
 }
 
+const VAZIO = { nome: '', contato: '', prazo_pagamento_dias: 45 }
+
 function Fornecedores() {
   const [rows, setRows] = useState([])
   const [open, setOpen] = useState(false)
-  const [f, setF] = useState({ nome: '', contato: '', prazo_pagamento_dias: 45 })
+  const [editId, setEditId] = useState(null) // null = novo fornecedor
+  const [f, setF] = useState(VAZIO)
+  const [excluir, setExcluir] = useState(null) // fornecedor a excluir
 
   const load = () => supabase.from('fornecedores').select('*').order('nome').then(({ data }) => setRows(data || []))
   useEffect(() => { load() }, [])
 
+  const abrirNovo = () => { setEditId(null); setF(VAZIO); setOpen(true) }
+  const abrirEditar = (r) => {
+    setEditId(r.id)
+    setF({ nome: r.nome || '', contato: r.contato || '', prazo_pagamento_dias: r.prazo_pagamento_dias ?? 45 })
+    setOpen(true)
+  }
+
   const salvar = async () => {
     if (!f.nome) return alert('Informe o nome do fornecedor.')
-    const { error } = await supabase.from('fornecedores').insert({
+    const dados = {
       nome: f.nome, contato: f.contato || null, prazo_pagamento_dias: Number(f.prazo_pagamento_dias) || 45,
-    })
+    }
+    const { error } = editId
+      ? await supabase.from('fornecedores').update(dados).eq('id', editId)
+      : await supabase.from('fornecedores').insert(dados)
     if (error) return alert(error.message)
-    setOpen(false); setF({ nome: '', contato: '', prazo_pagamento_dias: 45 }); load()
+    setOpen(false); setEditId(null); setF(VAZIO); load()
+  }
+
+  const confirmarExclusao = async () => {
+    const { error } = await supabase.from('fornecedores').delete().eq('id', excluir.id)
+    if (error) {
+      // 23503 = fornecedor já usado em compras/contas a pagar
+      if (error.code === '23503') {
+        alert('Este fornecedor não pode ser excluído porque já tem compras ou contas a pagar registradas. Você pode editar o cadastro dele, mas não apagar.')
+      } else {
+        alert(error.message)
+      }
+      return
+    }
+    setExcluir(null); load()
   }
 
   return (
-    <Card title="Fornecedores" right={<Button onClick={() => setOpen(true)}>Novo fornecedor</Button>}>
+    <Card title="Fornecedores" right={<Button onClick={abrirNovo}>Novo fornecedor</Button>}>
       {rows.length === 0 ? <Empty>Cadastre seu primeiro fornecedor.</Empty> : (
         <table className="w-full text-sm">
           <thead><tr className="text-left text-ink/45 text-xs border-b border-borda">
-            <th className="py-2 pr-3">Nome</th><th className="py-2 px-3">Contato</th><th className="py-2 px-3 text-right">Prazo (dias)</th>
+            <th className="py-2 pr-3">Nome</th><th className="py-2 px-3">Contato</th><th className="py-2 px-3 text-right">Prazo (dias)</th><th className="py-2 pl-3 text-right">Ações</th>
           </tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id} className="border-b border-borda/50">
               <td className="py-2 pr-3 font-medium">{r.nome}</td>
               <td className="py-2 px-3 text-ink/60">{r.contato || '—'}</td>
               <td className="py-2 px-3 text-right tnum">{r.prazo_pagamento_dias}</td>
+              <td className="py-2 pl-3 text-right whitespace-nowrap">
+                <button type="button" onClick={() => abrirEditar(r)} className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5">Editar</button>
+                <button type="button" onClick={() => setExcluir(r)} className="text-xs font-medium text-red-600 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50">Excluir</button>
+              </td>
             </tr>
           ))}</tbody>
         </table>
       )}
-      <Modal open={open} onClose={() => setOpen(false)} title="Novo fornecedor">
+
+      <Modal open={open} onClose={() => setOpen(false)} title={editId ? 'Editar fornecedor' : 'Novo fornecedor'}>
         <div className="space-y-3">
           <Field label="Nome"><input className={inputCls} value={f.nome} onChange={(e) => setF({ ...f, nome: e.target.value })} /></Field>
           <Field label="Contato"><input className={inputCls} value={f.contato} onChange={(e) => setF({ ...f, contato: e.target.value })} /></Field>
           <Field label="Prazo de pagamento (dias)"><input type="number" className={inputCls} value={f.prazo_pagamento_dias} onChange={(e) => setF({ ...f, prazo_pagamento_dias: e.target.value })} /></Field>
           <p className="text-xs text-ink/45">Esse prazo define o vencimento do boleto: data do recebimento + prazo.</p>
-          <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={salvar}>Salvar fornecedor</Button></div>
+          <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={salvar}>{editId ? 'Salvar alterações' : 'Salvar fornecedor'}</Button></div>
+        </div>
+      </Modal>
+
+      <Modal open={!!excluir} onClose={() => setExcluir(null)} title="Excluir fornecedor">
+        <div className="space-y-3">
+          <p className="text-sm">Tem certeza que deseja excluir o fornecedor <b>{excluir?.nome}</b>? Essa ação não pode ser desfeita.</p>
+          <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setExcluir(null)}>Cancelar</Button><Button onClick={confirmarExclusao}>Sim, excluir</Button></div>
         </div>
       </Modal>
     </Card>
