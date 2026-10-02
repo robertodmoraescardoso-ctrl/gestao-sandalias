@@ -32,6 +32,8 @@ export default function Dashboard() {
   const [erro, setErro] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  const [saude, setSaude] = useState(null)
+
   const [cobertura, setCobertura] = useState(30)
   const [repo, setRepo] = useState([])
   const [verTudo, setVerTudo] = useState(false)
@@ -44,10 +46,14 @@ export default function Dashboard() {
       supabase.rpc('fn_dashboard', { p_inicio: inicio, p_fim: fim }),
       supabase.rpc('fn_top_produtos', { p_inicio: inicio, p_fim: fim, p_limite: 5 }),
       supabase.rpc('fn_vendas_por_dia', { p_inicio: inicio, p_fim: fim }),
+      supabase.rpc('fn_indicadores_gestor', { p_inicio: inicio, p_fim: fim }),
     ])
-      .then(([d, t, s]) => {
+      .then(([d, t, s, g]) => {
         if (d.error) throw d.error
         setKpi(d.data)
+        // Indicador novo: se a função ainda não existir no banco, o painel
+        // segue funcionando sem a seção, em vez de quebrar a tela inteira.
+        if (!g.error) setSaude(g.data)
         setTop((t.data || []).map((r) => ({ nome: r.produto, qtd: Number(r.quantidade), fat: Number(r.faturamento) })))
         setSerie((s.data || []).map((r) => ({ dia: dataBR(r.dia).slice(0, 5), fat: Number(r.faturamento) })))
       })
@@ -331,6 +337,80 @@ export default function Dashboard() {
             </div>
           </Card>
 
+          {/* Saúde do negócio — indicadores de varejo com referência do setor */}
+          {saude && (
+            <section>
+              <h2 className="font-display font-semibold text-ink/70 text-sm mb-1">Saúde do negócio</h2>
+              <p className="text-ink/45 text-xs mb-3">
+                Comparado com a referência do varejo de moda. Giro e GMROI usam o estoque de
+                hoje como base — servem para comparar produtos, não períodos.
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Indicador
+                  rot="Dinheiro parado"
+                  val={`${saude.estoque_parado_pct}%`}
+                  sub={`${brl(saude.estoque_parado_valor)} em numeração que não vendeu`}
+                  referencia="ideal: abaixo de 5%"
+                  estado={saude.estoque_parado_pct <= 5 ? 'bom' : saude.estoque_parado_pct <= 15 ? 'atencao' : 'ruim'}
+                />
+                <Indicador
+                  rot="Giro do estoque"
+                  val={`${saude.giro_anual}×`}
+                  sub={saude.cobertura_dias ? `o estoque de hoje dura ${saude.cobertura_dias} dias` : '—'}
+                  referencia="saudável: 3× a 6× ao ano"
+                  estado={saude.giro_anual >= 3 && saude.giro_anual <= 8 ? 'bom' : saude.giro_anual < 3 ? 'ruim' : 'atencao'}
+                />
+                <Indicador
+                  rot="GMROI"
+                  val={`${saude.gmroi}`}
+                  sub="margem que cada R$ 1 em estoque devolve por ano"
+                  referencia="mínimo aceitável: 2,0"
+                  estado={saude.gmroi >= 2 ? 'bom' : saude.gmroi >= 1 ? 'atencao' : 'ruim'}
+                />
+                <Indicador
+                  rot="Clientes que voltam"
+                  val={`${saude.recompra_pct}%`}
+                  sub={`${saude.clientes_recorrentes} de ${saude.clientes_total} clientes`}
+                  referencia="referência do setor: 25% a 30%"
+                  estado={saude.recompra_pct >= 25 ? 'bom' : saude.recompra_pct >= 15 ? 'atencao' : 'ruim'}
+                />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-6 mt-4">
+                <Card title="Quanto vale um cliente que volta">
+                  <div className="space-y-3 text-sm">
+                    <Linha rot="Gasto de quem comprou uma vez" val={brl(saude.gasto_cliente_1x)} />
+                    <Linha rot="Gasto de quem voltou" val={brl(saude.gasto_cliente_recorrente)} />
+                    {saude.gasto_cliente_1x > 0 && (
+                      <p className="text-ink/60 text-[13px] leading-relaxed pt-1">
+                        Quem volta gasta{' '}
+                        <b className="text-ink">
+                          {(saude.gasto_cliente_recorrente / saude.gasto_cliente_1x).toFixed(1)}×
+                        </b>{' '}
+                        mais que quem compra uma única vez. Trazer um cliente de volta rende
+                        mais do que achar um novo.
+                      </p>
+                    )}
+                  </div>
+                </Card>
+
+                <Card title="Giro das peças no período">
+                  <div className="space-y-3 text-sm">
+                    <Linha rot="Pares vendidos" val={num(saude.pares_vendidos)} />
+                    <Linha rot="Pares parados em estoque" val={num(saude.pares_estoque)} />
+                    <Linha rot="Saíram das suas mãos" val={`${saude.sell_through_pct}%`} />
+                    {saude.rupturas > 0 && (
+                      <p className="text-alerta text-[13px] leading-relaxed pt-1">
+                        <b>{saude.rupturas} {saude.rupturas === 1 ? 'numeração zerada' : 'numerações zeradas'}</b> que
+                        vinham vendendo. Cada dia assim é venda perdida — veja a sugestão de reposição abaixo.
+                      </p>
+                    )}
+                  </div>
+                </Card>
+              </div>
+            </section>
+          )}
+
           {/* Estoque + Compras */}
           <div className="grid md:grid-cols-3 gap-6">
             <Card title="Estoque">
@@ -368,6 +448,31 @@ export default function Dashboard() {
         </div>
       )}
     </Page>
+  )
+}
+
+/* Indicador com referência do setor: número sozinho não diz se está bom.
+   O estado colore a borda para o gestor achar o problema de relance. */
+function Indicador({ rot, val, sub, referencia, estado }) {
+  const cor = {
+    bom: 'border-l-esmeralda',
+    atencao: 'border-l-amber-400',
+    ruim: 'border-l-alerta',
+  }[estado] || 'border-l-borda'
+
+  const corTexto = {
+    bom: 'text-esmeralda',
+    atencao: 'text-amber-600',
+    ruim: 'text-alerta',
+  }[estado] || 'text-ink'
+
+  return (
+    <div className={`bg-white rounded-lg border border-borda border-l-4 ${cor} p-4`}>
+      <div className="text-[11px] uppercase tracking-wide text-ink/45">{rot}</div>
+      <div className={`font-display font-bold tnum text-2xl mt-1.5 ${corTexto}`}>{val}</div>
+      {sub && <div className="text-[11px] text-ink/55 mt-1 leading-snug">{sub}</div>}
+      {referencia && <div className="text-[11px] text-ink/35 mt-1.5 italic">{referencia}</div>}
+    </div>
   )
 }
 
