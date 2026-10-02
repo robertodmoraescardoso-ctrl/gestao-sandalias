@@ -25,7 +25,7 @@ export default function Vendas() {
 
   useEffect(() => {
     supabase.from('pedidos')
-      .select('id, codigo, itens, total, cliente_nome, status, criado_em')
+      .select('id, codigo, itens, total, cliente_nome, status, criado_em, forma_pagamento, parcelas, taxa_valor, valor_liquido')
       .order('criado_em', { ascending: false }).limit(300)
       .then(({ data, error }) => {
         if (error) setErro(error.message)
@@ -39,6 +39,19 @@ export default function Vendas() {
 
   const itensResumo = (itens) =>
     (itens || []).map((i) => `${i.nome}${i.tamanho ? ` (${i.tamanho})` : ''} ×${i.qtd}`).join(', ')
+
+  // Como o cliente pagou. "Pix" puro é o Pix direto na chave da loja, sem taxa.
+  const comoPagou = (r) => {
+    if (r.forma_pagamento === 'cartao') return `Cartão ${r.parcelas > 1 ? `${r.parcelas}×` : 'à vista'}`
+    if (r.forma_pagamento === 'pix_infinitepay') return 'Pix (InfinitePay)'
+    return 'Pix'
+  }
+
+  // O que sobra depois da taxa da maquineta — é este número que vira receita.
+  const liquido = (r) => Number(r.valor_liquido ?? r.total) || 0
+
+  const totalLiquido = visiveis.reduce((s, r) => s + liquido(r), 0)
+  const totalTaxas = visiveis.reduce((s, r) => s + (Number(r.taxa_valor) || 0), 0)
 
   return (
     <Page>
@@ -62,7 +75,9 @@ export default function Vendas() {
               <thead><tr className="text-left text-ink/45 text-xs border-b border-borda">
                 <th className="py-2 pr-3">Data</th><th className="py-2 px-3">Código</th>
                 <th className="py-2 px-3">Cliente</th><th className="py-2 px-3">Itens</th>
-                <th className="py-2 px-3 text-right">Total</th><th className="py-2 pl-3">Status</th>
+                <th className="py-2 px-3">Pago com</th>
+                <th className="py-2 px-3 text-right">Total</th>
+                <th className="py-2 px-3 text-right">Líquido</th><th className="py-2 pl-3">Status</th>
               </tr></thead>
               <tbody>{visiveis.map((r) => {
                 const [tone, label] = statusInfo[r.status] || ['neutro', r.status]
@@ -72,12 +87,30 @@ export default function Vendas() {
                     <td className="py-2 px-3 font-medium">{r.codigo || '—'}</td>
                     <td className="py-2 px-3">{r.cliente_nome || '—'}</td>
                     <td className="py-2 px-3 text-ink/60 max-w-[300px]">{itensResumo(r.itens)}</td>
-                    <td className="py-2 px-3 text-right tnum">{brl(r.total)}</td>
+                    <td className="py-2 px-3 text-ink/60 whitespace-nowrap">{comoPagou(r)}</td>
+                    <td className="py-2 px-3 text-right tnum text-ink/60">{brl(r.total)}</td>
+                    <td className="py-2 px-3 text-right tnum font-medium">
+                      {brl(liquido(r))}
+                      {Number(r.taxa_valor) > 0 && (
+                        <div className="text-[11px] text-alerta font-normal">−{brl(r.taxa_valor)} taxa</div>
+                      )}
+                    </td>
                     <td className="py-2 pl-3"><Badge tone={tone}>{label}</Badge></td>
                   </tr>
                 )
               })}</tbody>
             </table>
+
+            <div className="flex flex-wrap justify-end gap-6 border-t border-borda mt-3 pt-3 text-sm">
+              <div className="text-right">
+                <div className="text-ink/45 text-[11px] uppercase tracking-wide">Taxas de cartão</div>
+                <div className="font-display font-semibold tnum text-alerta">−{brl(totalTaxas)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-ink/45 text-[11px] uppercase tracking-wide">Recebido (líquido)</div>
+                <div className="font-display font-bold tnum">{brl(totalLiquido)}</div>
+              </div>
+            </div>
           </div>
         )}
       </Card>

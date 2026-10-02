@@ -92,7 +92,7 @@ export default function Dashboard() {
     <Page>
       <PageHeader
         title="Painel do gestor"
-        subtitle="Vendas reais do site, estoque da loja, lucro e contas — tudo integrado."
+        subtitle="Vendas reais do site, já líquidas da taxa do cartão, estoque, lucro e contas."
         right={
           <div className="flex gap-1 bg-white border border-borda rounded-md p-1">
             {periodos.map((p) => (
@@ -131,7 +131,10 @@ export default function Dashboard() {
           <section>
             <h2 className="font-display font-semibold text-ink/70 text-sm mb-2">Financeiro</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Kpi label="Faturamento" value={brl(kpi.faturamento)} big />
+              <Kpi label="Faturamento" value={brl(kpi.faturamento)} big
+                hint={Number(kpi.taxas_cartao) > 0
+                  ? `${brl(kpi.faturamento_bruto)} vendidos − ${brl(kpi.taxas_cartao)} de taxa do cartão`
+                  : 'o que de fato entrou na conta'} />
               <Kpi label="Lucro do que foi vendido" value={brl(kpi.lucro_geral)}
                 hint="Faturamento − CMV − despesas − ativações"
                 tone={kpi.lucro_geral >= 0 ? 'positivo' : 'negativo'} big />
@@ -144,6 +147,9 @@ export default function Dashboard() {
               <Kpi label="Lucro bruto (vendas)" value={brl(kpi.lucro_bruto)} hint="Faturamento − CMV"
                 tone={kpi.lucro_bruto >= 0 ? 'positivo' : 'negativo'} />
               <Kpi label="CMV (custo do vendido)" value={brl(kpi.cmv)} />
+              <Kpi label="Taxas de cartão" value={brl(kpi.taxas_cartao)}
+                hint="retidas pela InfinitePay, já fora do faturamento"
+                tone={Number(kpi.taxas_cartao) > 0 ? 'negativo' : 'default'} />
               <Kpi label="Compra do estoque parado" value={brl(compraEstoque)}
                 hint="o que ainda não vendeu" />
               <Kpi label="Total a pagar" value={brl(kpi.total_a_pagar)} hint={`${brl(kpi.vence_7)} vencem em 7 dias`} />
@@ -307,6 +313,12 @@ export default function Dashboard() {
           {/* Como o lucro total é formado */}
           <Card title="Como o lucro total é calculado">
             <div className="space-y-3 text-sm">
+              {Number(kpi.taxas_cartao) > 0 && (
+                <>
+                  <Linha rot="Vendas no período (bruto)" val={brl(kpi.faturamento_bruto)} />
+                  <Linha rot="− Taxa da InfinitePay" val={brl(kpi.taxas_cartao)} />
+                </>
+              )}
               <Linha rot="Faturamento" val={brl(kpi.faturamento)} />
               <Linha rot="− Compra dos produtos já vendidos" val={brl(compraVendidos)} />
               <Linha rot="− Compra das sandálias paradas no estoque" val={brl(compraEstoque)} />
