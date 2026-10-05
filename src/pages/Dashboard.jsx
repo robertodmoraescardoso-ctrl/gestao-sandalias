@@ -165,6 +165,9 @@ export default function Dashboard() {
             </div>
           </section>
 
+          {/* Quanto o sócio pode retirar */}
+          <RetiradaSocio />
+
           {/* Sugestão de reposição */}
           <section>
             <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
@@ -482,5 +485,174 @@ function Linha({ rot, val }) {
       <span className="text-ink/60">{rot}</span>
       <span className="font-display font-semibold tnum">{val}</span>
     </div>
+  )
+}
+
+/* ------------------------------------------------------------------
+   Retirada do sócio x caixa da empresa
+   Regra usada (prática comum no pequeno varejo):
+   1) Primeiro separa o que é da empresa: contas a pagar em aberto
+      + reserva de segurança (% do faturamento dos últimos 30 dias).
+   2) Do lucro dos últimos 30 dias, só uma parte vai para o sócio
+      (o resto fica para a empresa crescer / repor estoque).
+   3) A sugestão é o MENOR dos dois limites, arredondado para baixo
+      em múltiplos de R$ 10, já descontando o que foi retirado em 30 dias.
+   O cálculo é feito no banco pela função fn_sugestao_retirada.
+------------------------------------------------------------------- */
+function lerConfig() {
+  try {
+    const c = JSON.parse(localStorage.getItem('cfg_retirada') || '{}')
+    return { pctLucro: c.pctLucro ?? 50, pctReserva: c.pctReserva ?? 15, saldo: c.saldo ?? '' }
+  } catch {
+    return { pctLucro: 50, pctReserva: 15, saldo: '' }
+  }
+}
+
+function RetiradaSocio() {
+  const [cfg, setCfg] = useState(lerConfig)
+  const [r, setR] = useState(null)
+  const [erro, setErro] = useState(null)
+  const [ajustes, setAjustes] = useState(false)
+
+  useEffect(() => {
+    try { localStorage.setItem('cfg_retirada', JSON.stringify(cfg)) } catch {}
+    const saldo = String(cfg.saldo).replace(/\./g, '').replace(',', '.').trim()
+    const t = setTimeout(() => {
+      supabase
+        .rpc('fn_sugestao_retirada', {
+          p_pct_lucro: Number(cfg.pctLucro) || 0,
+          p_pct_reserva: Number(cfg.pctReserva) || 0,
+          p_saldo_real: saldo === '' || isNaN(Number(saldo)) ? null : Number(saldo),
+        })
+        .then(({ data, error }) => {
+          if (error) { setErro(error.message); return }
+          setErro(null)
+          setR(data)
+        })
+    }, 400)
+    return () => clearTimeout(t)
+  }, [cfg])
+
+  const set = (k) => (e) => setCfg({ ...cfg, [k]: e.target.value })
+
+  if (erro) {
+    return (
+      <div className="bg-alerta/10 text-alerta text-sm rounded-md p-3">
+        Retirada do sócio indisponível: {erro}
+      </div>
+    )
+  }
+  if (!r) return null
+
+  const sug = Number(r.sugestao)
+  const semDespesas = Number(r.despesas) === 0 && Number(r.ativacoes) === 0
+  const sobraAposContas = Number(r.caixa_apos_retirada) - Number(r.contas_pendentes)
+  const faltaRepor = Number(r.reposicao_30d) > sobraAposContas
+  const limitadoPor = Number(r.livre) < Number(r.teto_lucro) ? 'caixa' : 'lucro'
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+        <h2 className="font-display font-semibold text-ink/70 text-sm">
+          Retirada do sócio x caixa da empresa
+        </h2>
+        <button onClick={() => setAjustes(!ajustes)}
+          className="text-xs text-ink/50 hover:text-ink underline">
+          {ajustes ? 'Fechar ajustes' : 'Ajustar regra / informar saldo do banco'}
+        </button>
+      </div>
+
+      {ajustes && (
+        <div className="bg-white border border-borda rounded-lg p-4 mb-3 grid md:grid-cols-3 gap-4 text-sm">
+          <label className="block">
+            <span className="block text-xs text-ink/60 mb-1">Saldo real na conta da Beblue (R$)</span>
+            <input value={cfg.saldo} onChange={set('saldo')} inputMode="decimal" placeholder="vazio = usar o estimado"
+              className="w-full border border-borda rounded-md px-3 py-2 bg-white focus:outline-none focus:border-ink/40" />
+            <span className="block text-[11px] text-ink/40 mt-1">Mais preciso que o estimado. Ex.: 5230,50</span>
+          </label>
+          <label className="block">
+            <span className="block text-xs text-ink/60 mb-1">Parte do lucro para o sócio: <b>{cfg.pctLucro}%</b></span>
+            <input type="range" min="0" max="80" step="5" value={cfg.pctLucro} onChange={set('pctLucro')} className="w-full" />
+            <span className="block text-[11px] text-ink/40 mt-1">Mercado: 30% a 50% enquanto a loja cresce</span>
+          </label>
+          <label className="block">
+            <span className="block text-xs text-ink/60 mb-1">Reserva de segurança: <b>{cfg.pctReserva}%</b> do faturamento de 30 dias</span>
+            <input type="range" min="0" max="50" step="5" value={cfg.pctReserva} onChange={set('pctReserva')} className="w-full" />
+            <span className="block text-[11px] text-ink/40 mt-1">Mercado: 10% a 20% (cobre imprevisto e mês fraco)</span>
+          </label>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <Kpi label="Pode retirar agora" value={brl(sug)} big tone={sug > 0 ? 'positivo' : 'negativo'}
+          hint={sug > 0
+            ? `limitado pelo ${limitadoPor === 'caixa' ? 'caixa livre' : 'lucro dos últimos 30 dias'}`
+            : 'não retire agora — o caixa precisa ficar na empresa'} />
+        <Kpi label="Manter no caixa (mínimo)" value={brl(r.manter_no_caixa)} big
+          hint={`${brl(r.contas_pendentes)} de contas + ${brl(r.reserva_seguranca)} de reserva`} />
+        <Kpi label="Caixa depois da retirada" value={brl(r.caixa_apos_retirada)} big
+          hint={r.usou_saldo_real ? 'a partir do saldo que você informou' : 'caixa estimado pelo painel'} />
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6 mt-4">
+        <Card title="1º limite: o caixa">
+          <div className="space-y-3 text-sm">
+            {r.usou_saldo_real ? (
+              <Linha rot="Saldo informado na conta" val={brl(r.caixa)} />
+            ) : (
+              <>
+                <Linha rot="Tudo o que entrou de vendas" val={brl(r.entradas)} />
+                <Linha rot="− Pago a fornecedores" val={brl(r.pago_fornecedores)} />
+                <Linha rot="− Despesas e ativações" val={brl(Number(r.despesas) + Number(r.ativacoes))} />
+                <Linha rot="− Retiradas já feitas" val={brl(r.retiradas)} />
+                <Linha rot="= Caixa estimado" val={brl(r.caixa)} />
+              </>
+            )}
+            <Linha rot="− Contas a pagar em aberto" val={brl(r.contas_pendentes)} />
+            <Linha rot={`− Reserva de segurança (${r.pct_reserva}%)`} val={brl(r.reserva_seguranca)} />
+            <div className="flex justify-between pt-1">
+              <span className="font-display font-semibold text-ink">= Caixa livre</span>
+              <span className={`font-display font-bold tnum ${Number(r.livre) >= 0 ? 'text-positivo' : 'text-negativo'}`}>
+                {brl(r.livre)}
+              </span>
+            </div>
+          </div>
+        </Card>
+
+        <Card title="2º limite: o lucro">
+          <div className="space-y-3 text-sm">
+            <Linha rot="Lucro dos últimos 30 dias" val={brl(r.lucro_30d)} />
+            <Linha rot={`× Parte do sócio (${r.pct_lucro}%)`} val={brl(Number(r.lucro_30d) * Number(r.pct_lucro) / 100)} />
+            <Linha rot="− Já retirado nos últimos 30 dias" val={brl(r.retirado_30d)} />
+            <div className="flex justify-between pt-1">
+              <span className="font-display font-semibold text-ink">= Teto pelo lucro</span>
+              <span className="font-display font-bold tnum">{brl(r.teto_lucro)}</span>
+            </div>
+            <p className="text-[12px] text-ink/50 leading-relaxed pt-1">
+              A sugestão é o <b>menor</b> dos dois limites, arredondado para baixo de R$ 10 em R$ 10.
+              Retire sempre por transferência da conta da Beblue e lance em Financeiro → Retiradas
+              para o painel descontar do caixa.
+            </p>
+          </div>
+        </Card>
+      </div>
+
+      {(semDespesas || faltaRepor) && (
+        <div className="mt-3 space-y-2">
+          {semDespesas && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-md p-3 text-[13px]">
+              <b>Nenhuma despesa ou ativação lançada.</b> O lucro está sem custos como frete, embalagem,
+              DAS do MEI e anúncios, então a sugestão pode estar alta. Lance-os em Financeiro → Despesas.
+            </div>
+          )}
+          {faltaRepor && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-md p-3 text-[13px]">
+              <b>A reposição sugerida custa {brl(r.reposicao_30d)}</b> e, depois de pagar as contas em aberto,
+              sobrariam {brl(sobraAposContas)}. Se o próximo pedido for à vista, retire menos ou espere a reposição.
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
