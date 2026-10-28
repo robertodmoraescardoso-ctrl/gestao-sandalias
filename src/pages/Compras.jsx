@@ -19,6 +19,7 @@ export default function Compras() {
   const [novo, setNovo] = useState(false)
   const [receber, setReceber] = useState(null)
   const [editar, setEditar] = useState(null)
+  const [excluir, setExcluir] = useState(null)
 
   const load = async () => {
     const { data } = await supabase
@@ -35,6 +36,7 @@ export default function Compras() {
 
   const totalPedido = (p) => (p.pedido_compra_itens || []).reduce((s, i) => s + i.quantidade * i.preco_unitario, 0)
   const pendentePedido = (p) => (p.pedido_compra_itens || []).reduce((s, i) => s + (i.quantidade - i.quantidade_recebida), 0)
+  const recebidasPedido = (p) => (p.pedido_compra_itens || []).reduce((s, i) => s + (i.quantidade_recebida || 0), 0)
   const atrasado = (p) => p.data_prevista && !['recebido', 'cancelado'].includes(p.status) && new Date(p.data_prevista) < new Date()
 
   return (
@@ -58,6 +60,7 @@ export default function Compras() {
               </tr></thead>
               <tbody>{pedidos.map((p) => {
                 const [tone, label] = statusBadge[p.status] || ['neutro', p.status]
+                const recebidas = recebidasPedido(p)
                 return (
                   <tr key={p.id} className="border-b border-borda/50">
                     <td className="py-2 pr-3 font-medium">{p.fornecedores?.nome || '—'}</td>
@@ -68,6 +71,9 @@ export default function Compras() {
                     <td className="py-2 px-3"><Badge tone={tone}>{label}</Badge></td>
                     <td className="py-2 pl-3 text-right whitespace-nowrap">
                       <button type="button" onClick={() => setEditar(p)} className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5 mr-1">Editar</button>
+                      {recebidas === 0 && (
+                        <button type="button" onClick={() => setExcluir(p)} className="text-xs font-medium text-ink/70 hover:text-alerta px-2 py-1 rounded hover:bg-alerta/5 mr-1">Excluir</button>
+                      )}
                       {pendentePedido(p) > 0 && p.status !== 'cancelado' && (
                         <Button variant="ghost" onClick={() => setReceber(p)}>Receber</Button>
                       )}
@@ -82,6 +88,7 @@ export default function Compras() {
 
       {novo && <NovoPedido fornecedores={fornecedores} produtos={produtos} onClose={() => setNovo(false)} onSaved={() => { setNovo(false); load() }} />}
       {editar && <EditarPedido pedido={editar} fornecedores={fornecedores} produtos={produtos} onClose={() => setEditar(null)} onSaved={() => { setEditar(null); load() }} />}
+      {excluir && <ExcluirPedido pedido={excluir} onClose={() => setExcluir(null)} onDeleted={() => { setExcluir(null); load() }} />}
       {receber && <Receber pedido={receber} onClose={() => setReceber(null)} onSaved={() => { setReceber(null); load() }} />}
     </Page>
   )
@@ -182,14 +189,21 @@ function NovoPedido({ fornecedores, produtos, onClose, onSaved }) {
   )
 }
 
+/* Status que o Roberto escolhe à mão. "Parcialmente recebido" e "Recebido"
+   ficam de fora de propósito: quem define esses dois é o banco, no gatilho do
+   recebimento. Digitar "Recebido" aqui só troca o rótulo e não traz peça
+   nenhuma para o estoque — foi o que aconteceu com o pedido de 14/09. */
 const STATUS_OPCOES = [
   ['realizado', 'Realizado'],
   ['confirmado', 'Confirmado'],
   ['em_transito', 'Em trânsito'],
-  ['parcialmente_recebido', 'Parcialmente recebido'],
-  ['recebido', 'Recebido'],
   ['cancelado', 'Cancelado'],
 ]
+
+const STATUS_AUTOMATICO = {
+  parcialmente_recebido: 'Parcialmente recebido (definido pelo recebimento)',
+  recebido: 'Recebido (definido pelo recebimento)',
+}
 
 function EditarPedido({ pedido, fornecedores, produtos, onClose, onSaved }) {
   const [forn, setForn] = useState(String(pedido.fornecedor_id || ''))
@@ -218,6 +232,7 @@ function EditarPedido({ pedido, fornecedores, produtos, onClose, onSaved }) {
     setItens(itens.filter((_, idx) => idx !== i))
   }
   const total = itens.reduce((s, it) => s + (Number(it.quantidade) || 0) * (Number(it.preco_unitario) || 0), 0)
+  const temRecebida = itens.some((it) => it.recebida > 0)
 
   const salvar = async () => {
     const validos = itens.filter((it) => it.produto_id && it.tamanho && Number(it.quantidade) > 0)
@@ -251,6 +266,12 @@ function EditarPedido({ pedido, fornecedores, produtos, onClose, onSaved }) {
   return (
     <Modal open onClose={onClose} title="Editar pedido de compra" width="max-w-2xl">
       <div className="space-y-3">
+        <div className="bg-sand/15 text-[#8a6b1c] text-sm rounded-md p-3">
+          <b>Esta tela não mexe no estoque.</b> Ela corrige os dados do pedido: fornecedor, datas,
+          prazo, quantidades pedidas e custo. Quem coloca peça no estoque é o botão <b>Receber</b> da
+          lista, e só ele.
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <Field label="Fornecedor">
             <select className={inputCls} value={forn} onChange={(e) => setForn(e.target.value)}>
@@ -260,6 +281,9 @@ function EditarPedido({ pedido, fornecedores, produtos, onClose, onSaved }) {
           <Field label="Status">
             <select className={inputCls} value={status} onChange={(e) => setStatus(e.target.value)}>
               {STATUS_OPCOES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {STATUS_AUTOMATICO[pedido.status] && (
+                <option value={pedido.status}>{STATUS_AUTOMATICO[pedido.status]}</option>
+              )}
             </select>
           </Field>
         </div>
@@ -296,14 +320,73 @@ function EditarPedido({ pedido, fornecedores, produtos, onClose, onSaved }) {
           <button type="button" className="text-sm text-esmeralda" onClick={addItem}>+ adicionar item</button>
         </div>
 
-        <p className="text-xs text-ink/45">
-          Atenção: editar o pedido não altera o estoque nem as contas a pagar já geradas por recebimentos anteriores.
-          Se mudar quantidade ou custo de itens já recebidos, ajuste o estoque e o Financeiro manualmente.
-        </p>
+        {temRecebida && (
+          <p className="text-xs text-ink/45">
+            Este pedido já tem peças recebidas. Mudar a quantidade ou o custo delas aqui não corrige
+            o estoque nem as contas a pagar que já nasceram do recebimento — esse acerto ainda é manual.
+          </p>
+        )}
 
         <div className="flex items-center justify-between pt-1">
           <span className="text-sm text-ink/60">Total: <b className="tnum">{brl(total)}</b></span>
           <div className="flex gap-2"><Button variant="ghost" onClick={onClose}>Cancelar</Button><Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar alterações'}</Button></div>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+/* Exclusão definitiva do pedido de compra.
+   Só aparece para pedido com ZERO peças recebidas. Com zero recebidas não houve
+   recebimento, então não há estoque para devolver nem conta a pagar para apagar:
+   some o pedido e o banco fica consistente. Pedido que já recebeu alguma peça
+   não pode ser excluído por aqui — apagar o pedido deixaria o estoque com peças
+   sem origem e a conta a pagar órfã. */
+function ExcluirPedido({ pedido, onClose, onDeleted }) {
+  const [excluindo, setExcluindo] = useState(false)
+  const itens = pedido.pedido_compra_itens || []
+  const total = itens.reduce((s, i) => s + i.quantidade * i.preco_unitario, 0)
+  const pecas = itens.reduce((s, i) => s + i.quantidade, 0)
+
+  const confirmar = async () => {
+    setExcluindo(true)
+    const { error: e1 } = await supabase.from('pedido_compra_itens').delete().eq('pedido_id', pedido.id)
+    if (e1) {
+      setExcluindo(false)
+      return alert('Não foi possível excluir os itens do pedido:\n\n' + e1.message)
+    }
+    const { error: e2 } = await supabase.from('pedidos_compra').delete().eq('id', pedido.id)
+    if (e2) {
+      setExcluindo(false)
+      return alert(
+        'Os itens foram apagados, mas o pedido não.\n\n' + e2.message +
+        '\n\nIsso costuma significar que existe um recebimento preso a este pedido. ' +
+        'Não mexa mais nele e mostre esta mensagem antes de continuar.'
+      )
+    }
+    onDeleted()
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Excluir pedido de compra" width="max-w-md">
+      <div className="space-y-3">
+        <p className="text-sm text-ink/70">
+          Você vai apagar definitivamente este pedido. Não dá para desfazer.
+        </p>
+        <div className="border border-borda rounded-md p-3 text-sm space-y-1">
+          <div className="flex justify-between"><span className="text-ink/50">Fornecedor</span><b>{pedido.fornecedores?.nome || '—'}</b></div>
+          <div className="flex justify-between"><span className="text-ink/50">Data do pedido</span><b>{dataBR(pedido.data_pedido)}</b></div>
+          <div className="flex justify-between"><span className="text-ink/50">Previsão</span><b>{dataBR(pedido.data_prevista)}</b></div>
+          <div className="flex justify-between"><span className="text-ink/50">Itens</span><b>{itens.length} linha(s), {num(pecas)} pç</b></div>
+          <div className="flex justify-between"><span className="text-ink/50">Total</span><b className="tnum">{brl(total)}</b></div>
+        </div>
+        <p className="text-xs text-ink/45">
+          Este pedido não tem nenhuma peça recebida, então nada sai do estoque e nenhuma conta a
+          pagar é afetada. É só o pedido que desaparece da lista.
+        </p>
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" onClick={onClose}>Voltar</Button>
+          <Button onClick={confirmar} disabled={excluindo}>{excluindo ? 'Excluindo…' : 'Excluir definitivamente'}</Button>
         </div>
       </div>
     </Modal>
