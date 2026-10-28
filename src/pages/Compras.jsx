@@ -19,7 +19,7 @@ export default function Compras() {
   const [novo, setNovo] = useState(false)
   const [receber, setReceber] = useState(null)
   const [editar, setEditar] = useState(null)
-  const [excluir, setExcluir] = useState(null)
+  const [cancelar, setCancelar] = useState(null)
 
   const load = async () => {
     const { data } = await supabase
@@ -71,8 +71,8 @@ export default function Compras() {
                     <td className="py-2 px-3"><Badge tone={tone}>{label}</Badge></td>
                     <td className="py-2 pl-3 text-right whitespace-nowrap">
                       <button type="button" onClick={() => setEditar(p)} className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5 mr-1">Editar</button>
-                      {recebidas === 0 && (
-                        <button type="button" onClick={() => setExcluir(p)} className="text-xs font-medium text-ink/70 hover:text-alerta px-2 py-1 rounded hover:bg-alerta/5 mr-1">Excluir</button>
+                      {recebidas === 0 && p.status !== 'cancelado' && (
+                        <button type="button" onClick={() => setCancelar(p)} className="text-xs font-medium text-ink/70 hover:text-alerta px-2 py-1 rounded hover:bg-alerta/5 mr-1">Cancelar</button>
                       )}
                       {pendentePedido(p) > 0 && p.status !== 'cancelado' && (
                         <Button variant="ghost" onClick={() => setReceber(p)}>Receber</Button>
@@ -88,7 +88,7 @@ export default function Compras() {
 
       {novo && <NovoPedido fornecedores={fornecedores} produtos={produtos} onClose={() => setNovo(false)} onSaved={() => { setNovo(false); load() }} />}
       {editar && <EditarPedido pedido={editar} fornecedores={fornecedores} produtos={produtos} onClose={() => setEditar(null)} onSaved={() => { setEditar(null); load() }} />}
-      {excluir && <ExcluirPedido pedido={excluir} onClose={() => setExcluir(null)} onDeleted={() => { setExcluir(null); load() }} />}
+      {cancelar && <CancelarPedido pedido={cancelar} onClose={() => setCancelar(null)} onSaved={() => { setCancelar(null); load() }} />}
       {receber && <Receber pedido={receber} onClose={() => setReceber(null)} onSaved={() => { setReceber(null); load() }} />}
     </Page>
   )
@@ -336,42 +336,42 @@ function EditarPedido({ pedido, fornecedores, produtos, onClose, onSaved }) {
   )
 }
 
-/* Exclusão definitiva do pedido de compra.
-   Só aparece para pedido com ZERO peças recebidas. Com zero recebidas não houve
-   recebimento, então não há estoque para devolver nem conta a pagar para apagar:
-   some o pedido e o banco fica consistente. Pedido que já recebeu alguma peça
-   não pode ser excluído por aqui — apagar o pedido deixaria o estoque com peças
-   sem origem e a conta a pagar órfã. */
-function ExcluirPedido({ pedido, onClose, onDeleted }) {
-  const [excluindo, setExcluindo] = useState(false)
+/* Cancelamento do pedido de compra.
+   NADA é apagado: o pedido e os itens continuam no banco, só mudam de status
+   para 'cancelado'. O histórico da compra fica preservado e o pedido sai do
+   "em trânsito" do estoque, porque a view v_estoque só conta pedido com status
+   confirmado, em trânsito ou parcialmente recebido.
+   Só aparece para pedido com ZERO peças recebidas: pedido que já recebeu alguma
+   peça gerou entrada de estoque e conta a pagar, e cancelar sem reverter isso
+   deixaria o saldo errado.
+   Antes isto era uma exclusão em duas etapas (itens e depois pedido). Quando a
+   segunda etapa falhava, os itens já tinham sido apagados e não havia como
+   recuperá-los. Por isso virou uma única operação que não apaga nada. */
+function CancelarPedido({ pedido, onClose, onSaved }) {
+  const [salvando, setSalvando] = useState(false)
   const itens = pedido.pedido_compra_itens || []
   const total = itens.reduce((s, i) => s + i.quantidade * i.preco_unitario, 0)
   const pecas = itens.reduce((s, i) => s + i.quantidade, 0)
 
   const confirmar = async () => {
-    setExcluindo(true)
-    const { error: e1 } = await supabase.from('pedido_compra_itens').delete().eq('pedido_id', pedido.id)
-    if (e1) {
-      setExcluindo(false)
-      return alert('Não foi possível excluir os itens do pedido:\n\n' + e1.message)
+    setSalvando(true)
+    const { error } = await supabase
+      .from('pedidos_compra')
+      .update({ status: 'cancelado' })
+      .eq('id', pedido.id)
+    if (error) {
+      setSalvando(false)
+      return alert('Não foi possível cancelar o pedido:\n\n' + error.message)
     }
-    const { error: e2 } = await supabase.from('pedidos_compra').delete().eq('id', pedido.id)
-    if (e2) {
-      setExcluindo(false)
-      return alert(
-        'Os itens foram apagados, mas o pedido não.\n\n' + e2.message +
-        '\n\nIsso costuma significar que existe um recebimento preso a este pedido. ' +
-        'Não mexa mais nele e mostre esta mensagem antes de continuar.'
-      )
-    }
-    onDeleted()
+    onSaved()
   }
 
   return (
-    <Modal open onClose={onClose} title="Excluir pedido de compra" width="max-w-md">
+    <Modal open onClose={onClose} title="Cancelar pedido de compra" width="max-w-md">
       <div className="space-y-3">
         <p className="text-sm text-ink/70">
-          Você vai apagar definitivamente este pedido. Não dá para desfazer.
+          Este pedido vai ficar marcado como cancelado. Nada é apagado: o pedido e os
+          itens continuam registrados e podem ser consultados depois.
         </p>
         <div className="border border-borda rounded-md p-3 text-sm space-y-1">
           <div className="flex justify-between"><span className="text-ink/50">Fornecedor</span><b>{pedido.fornecedores?.nome || '—'}</b></div>
@@ -382,11 +382,12 @@ function ExcluirPedido({ pedido, onClose, onDeleted }) {
         </div>
         <p className="text-xs text-ink/45">
           Este pedido não tem nenhuma peça recebida, então nada sai do estoque e nenhuma conta a
-          pagar é afetada. É só o pedido que desaparece da lista.
+          pagar é afetada. Ele deixa de contar como mercadoria em trânsito e some da fila de
+          recebimento, mas continua no histórico.
         </p>
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="ghost" onClick={onClose}>Voltar</Button>
-          <Button onClick={confirmar} disabled={excluindo}>{excluindo ? 'Excluindo…' : 'Excluir definitivamente'}</Button>
+          <Button onClick={confirmar} disabled={salvando}>{salvando ? 'Cancelando…' : 'Cancelar pedido'}</Button>
         </div>
       </div>
     </Modal>

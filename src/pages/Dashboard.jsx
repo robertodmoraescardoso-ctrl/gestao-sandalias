@@ -37,6 +37,7 @@ export default function Dashboard() {
   const [cobertura, setCobertura] = useState(30)
   const [repo, setRepo] = useState([])
   const [verTudo, setVerTudo] = useState(false)
+  const [verDetalhe, setVerDetalhe] = useState(false)
 
   useEffect(() => {
     const { inicio, fim } = periodo(chave)
@@ -135,7 +136,15 @@ export default function Dashboard() {
 
           {/* Financeiro */}
           <section>
-            <h2 className="font-display font-semibold text-ink/70 text-sm mb-2">Financeiro</h2>
+            {/* Quatro números de todo dia em cima; o resto fica atrás do "Ver detalhe".
+                Nada foi removido — só saiu da primeira olhada. */}
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <h2 className="font-display font-semibold text-ink/70 text-sm">Financeiro</h2>
+              <button type="button" onClick={() => setVerDetalhe(!verDetalhe)}
+                className="text-xs font-medium text-ink/55 hover:text-ink">
+                {verDetalhe ? 'Ocultar detalhe' : 'Ver detalhe (7 indicadores)'}
+              </button>
+            </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <Kpi label="Faturamento" value={brl(kpi.faturamento)} big
                 hint={Number(kpi.taxas_cartao) > 0
@@ -149,20 +158,23 @@ export default function Dashboard() {
                 tone={lucroTotal >= 0 ? 'positivo' : 'negativo'} big />
               <Kpi label="Contas vencidas" value={brl(kpi.total_vencido)}
                 tone={kpi.total_vencido > 0 ? 'negativo' : 'default'} big />
-
-              <Kpi label="Lucro bruto (vendas)" value={brl(kpi.lucro_bruto)} hint="Faturamento − CMV"
-                tone={kpi.lucro_bruto >= 0 ? 'positivo' : 'negativo'} />
-              <Kpi label="CMV (custo do vendido)" value={brl(kpi.cmv)} />
-              <Kpi label="Taxas de cartão" value={brl(kpi.taxas_cartao)}
-                hint="retidas pela InfinitePay, já fora do faturamento"
-                tone={Number(kpi.taxas_cartao) > 0 ? 'negativo' : 'default'} />
-              <Kpi label="Compra do estoque parado" value={brl(compraEstoque)}
-                hint="o que ainda não vendeu" />
-              <Kpi label="Total a pagar" value={brl(kpi.total_a_pagar)} hint={`${brl(kpi.vence_7)} vencem em 7 dias`} />
-
-              <Kpi label="Ativações / marketing" value={brl(kpi.ativacoes)} />
-              <Kpi label="Retiradas dos sócios" value={brl(kpi.retiradas)} hint="fora do resultado" />
             </div>
+
+            {verDetalhe && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+                <Kpi label="Lucro bruto (vendas)" value={brl(kpi.lucro_bruto)} hint="Faturamento − CMV"
+                  tone={kpi.lucro_bruto >= 0 ? 'positivo' : 'negativo'} />
+                <Kpi label="CMV (custo do vendido)" value={brl(kpi.cmv)} />
+                <Kpi label="Taxas de cartão" value={brl(kpi.taxas_cartao)}
+                  hint="retidas pela InfinitePay, já fora do faturamento"
+                  tone={Number(kpi.taxas_cartao) > 0 ? 'negativo' : 'default'} />
+                <Kpi label="Compra do estoque parado" value={brl(compraEstoque)}
+                  hint="o que ainda não vendeu" />
+                <Kpi label="Total a pagar" value={brl(kpi.total_a_pagar)} hint={`${brl(kpi.vence_7)} vencem em 7 dias`} />
+                <Kpi label="Ativações / marketing" value={brl(kpi.ativacoes)} />
+                <Kpi label="Retiradas dos sócios" value={brl(kpi.retiradas)} hint="fora do resultado" />
+              </div>
+            )}
           </section>
 
           {/* Quanto o sócio pode retirar */}

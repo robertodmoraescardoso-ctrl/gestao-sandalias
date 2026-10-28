@@ -7,16 +7,35 @@ import Modal from '../components/Modal.jsx'
 const tipoBadge = { doacao: ['amarelo', 'Doação'], pagamento: ['azul', 'Pagamento'], misto: ['verde', 'Misto'] }
 const custoUnit = (p) => (Number(p?.custo_produto) || 0) + (Number(p?.custo_frete) || 0) + (Number(p?.custo_embalagem) || 0)
 
+/* Aviso de falha de carregamento.
+   Sem isto, consulta que falha cai no `data || []` e a tela mostra "nenhuma
+   ativação registrada" — igualzinho a realmente não ter nenhuma. */
+function ErroCarga({ msg }) {
+  if (!msg) return null
+  return (
+    <div className="bg-alerta/10 text-alerta text-sm rounded-md p-3 mb-4">
+      Não foi possível carregar as ativações: {msg}
+      <div className="text-xs mt-1 text-alerta/80">
+        O que aparece abaixo pode estar incompleto. Recarregue a página antes de decidir qualquer coisa.
+      </div>
+    </div>
+  )
+}
+
 export default function Ativacoes() {
   const [rows, setRows] = useState([])
   const [produtos, setProdutos] = useState([])
   const [open, setOpen] = useState(false)
+  const [erro, setErro] = useState(null)
+  const [loading, setLoading] = useState(true)
 
   const load = async () => {
-    const { data } = await supabase.from('ativacoes')
+    const { data, error } = await supabase.from('ativacoes')
       .select('*, ativacao_itens(*, produtos(nome, custo_produto, custo_frete, custo_embalagem))')
       .order('data', { ascending: false })
+    setErro(error ? error.message : null)
     setRows(data || [])
+    setLoading(false)
   }
   useEffect(() => {
     load()
@@ -34,6 +53,8 @@ export default function Ativacoes() {
         subtitle="Doação de sandálias e pagamento a influenciadores. Doação sai do estoque da loja como marketing."
         right={<Button onClick={() => setOpen(true)}>Nova ativação</Button>} />
 
+      <ErroCarga msg={erro} />
+
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
         <Kpi label="Investido em ativações" value={brl(totalGeral)} big />
         <Kpi label="Nº de ativações" value={rows.length} />
@@ -41,7 +62,9 @@ export default function Ativacoes() {
       </div>
 
       <Card title="Ativações">
-        {rows.length === 0 ? <Empty>Nenhuma ativação registrada.</Empty> : (
+        {loading ? <Empty>Carregando…</Empty> : rows.length === 0 ? (
+          <Empty>Nenhuma ativação registrada.</Empty>
+        ) : (
           <table className="w-full text-sm">
             <thead><tr className="text-left text-ink/45 text-xs border-b border-borda">
               <th className="py-2 pr-3">Data</th><th className="py-2 px-3">Ativação</th><th className="py-2 px-3">Tipo</th>

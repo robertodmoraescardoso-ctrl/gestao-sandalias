@@ -4,6 +4,22 @@ import { brl, dataBR, hoje } from '../lib/format'
 import { Page, PageHeader, Card, Button, Badge, Kpi, Field, inputCls, Empty } from '../components/ui'
 import Modal from '../components/Modal.jsx'
 
+/* Aviso de falha de carregamento.
+   Sem isto, consulta que falha (view ausente, permissão, sessão expirada) cai no
+   `data || []` e a tela mostra "nenhum registro" — indistinguível de não ter
+   mesmo nenhum registro. Numa tela de decisão isso é pior que erro na cara. */
+function ErroCarga({ msg }) {
+  if (!msg) return null
+  return (
+    <div className="bg-alerta/10 text-alerta text-sm rounded-md p-3 mb-4">
+      Não foi possível carregar os dados desta aba: {msg}
+      <div className="text-xs mt-1 text-alerta/80">
+        O que aparece abaixo pode estar incompleto. Recarregue a página antes de decidir qualquer coisa.
+      </div>
+    </div>
+  )
+}
+
 export default function Financeiro() {
   const [aba, setAba] = useState('pagar')
   return (
@@ -25,9 +41,15 @@ export default function Financeiro() {
 function ContasPagar() {
   const [rows, setRows] = useState([])
   const [filtro, setFiltro] = useState('todas')
+  const [erro, setErro] = useState(null)
+  const [loading, setLoading] = useState(true)
 
   const load = () => supabase.from('v_contas_pagar').select('*')
-    .order('data_vencimento').then(({ data }) => setRows(data || []))
+    .order('data_vencimento').then(({ data, error }) => {
+      setErro(error ? error.message : null)
+      setRows(data || [])
+      setLoading(false)
+    })
   useEffect(() => { load() }, [])
 
   const pagar = async (id) => {
@@ -54,6 +76,7 @@ function ContasPagar() {
 
   return (
     <>
+      <ErroCarga msg={erro} />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <Kpi label="Total a pagar" value={brl(total)} big />
         <Kpi label="Vencido" value={brl(vencido)} tone={vencido ? 'negativo' : 'default'} big />
@@ -68,7 +91,9 @@ function ContasPagar() {
           <option value="pago">Pagas</option>
         </select>
       }>
-        {visiveis.length === 0 ? <Empty>Nenhuma conta. Elas aparecem aqui automaticamente ao registrar recebimentos.</Empty> : (
+        {loading ? <Empty>Carregando…</Empty> : visiveis.length === 0 ? (
+          <Empty>Nenhuma conta. Elas aparecem aqui automaticamente ao registrar recebimentos.</Empty>
+        ) : (
           <div className="overflow-auto">
             <table className="w-full text-sm">
               <thead><tr className="text-left text-ink/45 text-xs border-b border-borda">
@@ -104,8 +129,15 @@ function Retiradas() {
   const [open, setOpen] = useState(false)
   const [f, setF] = useState({ data: hoje(), socio: '', valor: '', descricao: '', forma_pagamento: '', observacao: '' })
 
+  const [erro, setErro] = useState(null)
+  const [loading, setLoading] = useState(true)
+
   const load = () => supabase.from('retiradas_socios').select('*').order('data', { ascending: false })
-    .then(({ data }) => setRows(data || []))
+    .then(({ data, error }) => {
+      setErro(error ? error.message : null)
+      setRows(data || [])
+      setLoading(false)
+    })
   useEffect(() => { load() }, [])
 
   const salvar = async () => {
@@ -118,12 +150,15 @@ function Retiradas() {
 
   return (
     <>
+      <ErroCarga msg={erro} />
       <div className="bg-white border border-borda rounded-md p-3 mb-6 text-sm text-ink/60">
         Retiradas ficam <b>fora</b> do cálculo de lucro e despesas — elas reduzem apenas o caixa disponível.
         Total retirado: <b className="tnum text-ink">{brl(total)}</b>
       </div>
       <Card title="Retiradas dos sócios" right={<Button onClick={() => setOpen(true)}>Nova retirada</Button>}>
-        {rows.length === 0 ? <Empty>Nenhuma retirada registrada.</Empty> : (
+        {loading ? <Empty>Carregando…</Empty> : rows.length === 0 ? (
+          <Empty>Nenhuma retirada registrada.</Empty>
+        ) : (
           <table className="w-full text-sm">
             <thead><tr className="text-left text-ink/45 text-xs border-b border-borda">
               <th className="py-2 pr-3">Data</th><th className="py-2 px-3">Sócio</th>
@@ -165,8 +200,15 @@ function Despesas() {
   const [open, setOpen] = useState(false)
   const [f, setF] = useState({ data: hoje(), categoria: '', descricao: '', valor: '', forma_pagamento: '' })
 
+  const [erro, setErro] = useState(null)
+  const [loading, setLoading] = useState(true)
+
   const load = () => supabase.from('despesas').select('*').order('data', { ascending: false })
-    .then(({ data }) => setRows(data || []))
+    .then(({ data, error }) => {
+      setErro(error ? error.message : null)
+      setRows(data || [])
+      setLoading(false)
+    })
   useEffect(() => { load() }, [])
 
   const salvar = async () => {
@@ -178,7 +220,10 @@ function Despesas() {
 
   return (
     <Card title="Despesas operacionais" right={<Button onClick={() => setOpen(true)}>Nova despesa</Button>}>
-      {rows.length === 0 ? <Empty>Nenhuma despesa registrada.</Empty> : (
+      <ErroCarga msg={erro} />
+      {loading ? <Empty>Carregando…</Empty> : rows.length === 0 ? (
+        <Empty>Nenhuma despesa registrada.</Empty>
+      ) : (
         <table className="w-full text-sm">
           <thead><tr className="text-left text-ink/45 text-xs border-b border-borda">
             <th className="py-2 pr-3">Data</th><th className="py-2 px-3">Categoria</th>

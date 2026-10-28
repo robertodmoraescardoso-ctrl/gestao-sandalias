@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
-import { brl } from '../lib/format'
+import { brl, num } from '../lib/format'
 import { Page, PageHeader, Card, Badge, Empty, inputCls } from '../components/ui'
 
 const statusInfo = {
@@ -52,6 +52,10 @@ export default function Vendas() {
 
   const totalLiquido = visiveis.reduce((s, r) => s + liquido(r), 0)
   const totalTaxas = visiveis.reduce((s, r) => s + (Number(r.taxa_valor) || 0), 0)
+  // Quantos pedidos e quantos pares, para o total não ser só dinheiro.
+  const totalPares = visiveis.reduce(
+    (s, r) => s + (r.itens || []).reduce((x, i) => x + (Number(i.qtd) || 0), 0), 0)
+  const ticket = visiveis.length > 0 ? totalLiquido / visiveis.length : 0
 
   return (
     <Page>
@@ -102,6 +106,18 @@ export default function Vendas() {
             </table>
 
             <div className="flex flex-wrap justify-end gap-6 border-t border-borda mt-3 pt-3 text-sm">
+              <div className="text-right">
+                <div className="text-ink/45 text-[11px] uppercase tracking-wide">Pedidos</div>
+                <div className="font-display font-semibold tnum text-ink/70">{num(visiveis.length)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-ink/45 text-[11px] uppercase tracking-wide">Pares vendidos</div>
+                <div className="font-display font-semibold tnum text-ink/70">{num(totalPares)}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-ink/45 text-[11px] uppercase tracking-wide">Ticket médio</div>
+                <div className="font-display font-semibold tnum text-ink/70">{brl(ticket)}</div>
+              </div>
               <div className="text-right">
                 <div className="text-ink/45 text-[11px] uppercase tracking-wide">Taxas de cartão</div>
                 <div className="font-display font-semibold tnum text-alerta">−{brl(totalTaxas)}</div>
