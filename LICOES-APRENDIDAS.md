@@ -97,6 +97,26 @@ corrigiu o saldo sem deixar rastro do que foi corrigido.
 
 ---
 
+**22. Nome de objeto no banco pode divergir do nome na migração.**
+Em 28/10/2026 `pg_get_functiondef` para `trg_recebimento_item` devolveu zero linhas, e a conclusão foi de que o recebimento de compra não alimentava o estoque. Errado: o gatilho existe, com nome mais curto — `trg_receb_item`. Procurar por um nome específico dá falso negativo. Antes de concluir que algo não existe, **liste os gatilhos da tabela**:
+
+```sql
+select c.relname, t.tgname, p.proname
+from pg_trigger t
+join pg_class c on c.oid = t.tgrelid
+join pg_proc p on p.oid = t.tgfoid
+join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public' and not t.tgisinternal;
+```
+
+**23. Quem move estoque é o gatilho, não a `criar_pedido`.**
+A documentação dizia que a `criar_pedido` baixava estoque e levantava `SEM_ESTOQUE`, `SEM_PRODUTO` e `INATIVO`. Lendo a definição real em 05/11/2026: ela só resolve o produto, grava a linha em `pedidos` e devolve o id. Quem move estoque e levanta as três exceções é `trg_pedido_estoque`, em `pedidos`. A coluna `pedidos.estoque_baixado` é a fonte da verdade sobre o estoque daquele pedido estar fora — não deduza pelo status.
+
+**24. UPDATE que não muda o status não dispara `trg_pedido_estoque`.**
+A primeira linha do gatilho sai fora quando `new.status is not distinct from old.status`. É isso que torna possível alterar `pedidos.itens` sem disparar baixa dupla, e é disso que a `fn_trocar_tamanho` depende. Se um dia o gatilho mudar, a troca de tamanho quebra junto.
+
+---
+
 ## Processo e diagnóstico
 
 **13. Antes de investigar bug, confirme que o arquivo foi publicado.**
@@ -145,3 +165,11 @@ Gerado como tipo 12, o banco Inter recusa. Identificador `***`, chave `+55819734
 
 **21. Detalhes de front que já quebraram:**
 `object-fit` nas fotos distorcia no iPhone; o botão de fechar do modal de produto ficava escondido atrás do cabeçalho fixo no mobile; o formulário de produto reaproveitava quantidades do produto editado anteriormente.
+
+
+---
+
+## Ferramentas e acesso
+
+**25. Conector do Supabase não enxerga projeto gerenciado pelo Vercel.**
+A organização da Beblue no Supabase tem id `vercel_icfg_fytwnkCUDcUz3gSMCvKZuSih` — foi criada pela integração do Vercel, não no Supabase. O conector autoriza a organização (`list_organizations` funciona, mostra plano free) mas `list_projects` devolve lista vazia e toda consulta é negada com "You do not have permission to perform this action". Reautorizar não resolve: o projeto pertence à integração. Saída conhecida: reivindicar o projeto (*claim*) para uma organização Supabase normal. Enquanto isso não for feito, o SQL vai para o Roberto colar no SQL Editor.
