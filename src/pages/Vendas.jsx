@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { brl, num } from '../lib/format'
-import { Page, PageHeader, Card, Badge, Empty, inputCls } from '../components/ui'
+import { Page, PageHeader, Card, Badge, Empty, Button, Field, inputCls } from '../components/ui'
+import Modal from '../components/Modal.jsx'
 
 const statusInfo = {
   entregue: ['verde', 'Entregue'],
@@ -12,6 +13,8 @@ const statusInfo = {
 }
 const VALIDAS = ['entregue', 'confirmado', 'pago_declarado']
 
+const CAMPOS = 'id, codigo, itens, total, cliente_nome, status, criado_em, forma_pagamento, parcelas, taxa_valor, valor_liquido, estoque_baixado'
+
 function dataHora(d) {
   if (!d) return '—'
   return new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -19,19 +22,23 @@ function dataHora(d) {
 
 export default function Vendas() {
   const [rows, setRows] = useState([])
+  const [produtos, setProdutos] = useState([])
   const [filtro, setFiltro] = useState('validas')
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState(null)
+  const [trocar, setTrocar] = useState(null)
 
-  useEffect(() => {
-    supabase.from('pedidos')
-      .select('id, codigo, itens, total, cliente_nome, status, criado_em, forma_pagamento, parcelas, taxa_valor, valor_liquido')
+  const carregar = () => {
+    supabase.from('pedidos').select(CAMPOS)
       .order('criado_em', { ascending: false }).limit(300)
       .then(({ data, error }) => {
         if (error) setErro(error.message)
         setRows(data || []); setLoading(false)
       })
-  }, [])
+    supabase.from('produtos').select('id, nome, tamanhos, estoque')
+      .then(({ data }) => setProdutos(data || []))
+  }
+  useEffect(carregar, [])
 
   const visiveis = rows.filter((r) =>
     filtro === 'validas' ? VALIDAS.includes(r.status)
@@ -52,10 +59,6 @@ export default function Vendas() {
 
   const totalLiquido = visiveis.reduce((s, r) => s + liquido(r), 0)
   const totalTaxas = visiveis.reduce((s, r) => s + (Number(r.taxa_valor) || 0), 0)
-  // Quantos pedidos e quantos pares, para o total não ser só dinheiro.
-  const totalPares = visiveis.reduce(
-    (s, r) => s + (r.itens || []).reduce((x, i) => x + (Number(i.qtd) || 0), 0), 0)
-  const ticket = visiveis.length > 0 ? totalLiquido / visiveis.length : 0
 
   return (
     <Page>
@@ -81,7 +84,8 @@ export default function Vendas() {
                 <th className="py-2 px-3">Cliente</th><th className="py-2 px-3">Itens</th>
                 <th className="py-2 px-3">Pago com</th>
                 <th className="py-2 px-3 text-right">Total</th>
-                <th className="py-2 px-3 text-right">Líquido</th><th className="py-2 pl-3">Status</th>
+                <th className="py-2 px-3 text-right">Líquido</th><th className="py-2 px-3">Status</th>
+                <th className="py-2 pl-3"></th>
               </tr></thead>
               <tbody>{visiveis.map((r) => {
                 const [tone, label] = statusInfo[r.status] || ['neutro', r.status]
@@ -99,25 +103,21 @@ export default function Vendas() {
                         <div className="text-[11px] text-alerta font-normal">−{brl(r.taxa_valor)} taxa</div>
                       )}
                     </td>
-                    <td className="py-2 pl-3"><Badge tone={tone}>{label}</Badge></td>
+                    <td className="py-2 px-3"><Badge tone={tone}>{label}</Badge></td>
+                    <td className="py-2 pl-3 text-right whitespace-nowrap">
+                      {(r.itens || []).length > 0 && (
+                        <button type="button" onClick={() => setTrocar(r)}
+                          className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5">
+                          Trocar tamanho
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 )
               })}</tbody>
             </table>
 
             <div className="flex flex-wrap justify-end gap-6 border-t border-borda mt-3 pt-3 text-sm">
-              <div className="text-right">
-                <div className="text-ink/45 text-[11px] uppercase tracking-wide">Pedidos</div>
-                <div className="font-display font-semibold tnum text-ink/70">{num(visiveis.length)}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-ink/45 text-[11px] uppercase tracking-wide">Pares vendidos</div>
-                <div className="font-display font-semibold tnum text-ink/70">{num(totalPares)}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-ink/45 text-[11px] uppercase tracking-wide">Ticket médio</div>
-                <div className="font-display font-semibold tnum text-ink/70">{brl(ticket)}</div>
-              </div>
               <div className="text-right">
                 <div className="text-ink/45 text-[11px] uppercase tracking-wide">Taxas de cartão</div>
                 <div className="font-display font-semibold tnum text-alerta">−{brl(totalTaxas)}</div>
@@ -130,6 +130,138 @@ export default function Vendas() {
           </div>
         )}
       </Card>
+
+      {trocar && (
+        <TrocarTamanho pedido={trocar} produtos={produtos}
+          onClose={() => setTrocar(null)}
+          onSaved={() => { setTrocar(null); carregar() }} />
+      )}
     </Page>
+  )
+}
+
+/* Traduz a excecao crua do banco para uma frase util. A fn_trocar_tamanho
+   levanta erros no formato CODIGO|dado|dado, igual ao resto do sistema. */
+function mensagemDoErro(bruto) {
+  const t = String(bruto || '')
+  if (t.includes('Could not find the function') || t.includes('PGRST202')) {
+    return 'A função de troca ainda não existe no banco. Rode a migração 0006_troca_tamanho.sql no SQL Editor do Supabase antes de usar esta tela.'
+  }
+  const m = t.match(/(SEM_ESTOQUE|SEM_PRODUTO|GRADE_INEXISTENTE|PEDIDO_NAO_ENCONTRADO|ITEM_NAO_ENCONTRADO|TAMANHO_INVALIDO)\|?([^"]*)/)
+  if (!m) return t || 'Não foi possível concluir a troca.'
+  const [, codigo, resto] = m
+  const p = (resto || '').split('|')
+  if (codigo === 'SEM_ESTOQUE')
+    return `Não há estoque suficiente de "${p[0]}" no tamanho ${p[1]} — disponível: ${p[2]}. A troca não foi feita.`
+  if (codigo === 'SEM_PRODUTO')
+    return `O produto "${p[0]}" não foi encontrado no catálogo. Esse item do pedido não pode ser trocado por aqui.`
+  if (codigo === 'GRADE_INEXISTENTE')
+    return `O produto "${p[0]}" não tem a grade ${p[1]} cadastrada. Cadastre a grade antes de trocar.`
+  if (codigo === 'PEDIDO_NAO_ENCONTRADO') return 'Pedido não encontrado. Atualize a página e tente de novo.'
+  if (codigo === 'ITEM_NAO_ENCONTRADO') return 'Item não encontrado no pedido. Atualize a página e tente de novo.'
+  return 'Informe um tamanho válido.'
+}
+
+function TrocarTamanho({ pedido, produtos, onClose, onSaved }) {
+  const itens = pedido.itens || []
+  const [idx, setIdx] = useState(0)
+  const [novo, setNovo] = useState('')
+  const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState(null)
+
+  const item = itens[idx] || {}
+  const prod = produtos.find((p) => String(p.id) === String(item.produto_id))
+  const grades = Array.isArray(prod?.tamanhos) ? prod.tamanhos : []
+  const estoqueDe = (t) => Number((prod?.estoque || {})[t] ?? 0)
+  const qtd = Number(item.qtd) || 0
+
+  // Com o estoque ja fora, a troca so passa se a grade nova tiver pecas.
+  const mexeEstoque = Boolean(pedido.estoque_baixado)
+  const faltaEstoque = mexeEstoque && novo && estoqueDe(novo) < qtd
+
+  const confirmar = async () => {
+    setErro(null); setSalvando(true)
+    const { error } = await supabase.rpc('fn_trocar_tamanho', {
+      p_pedido_id: pedido.id, p_item_index: idx, p_tamanho_novo: novo,
+    })
+    setSalvando(false)
+    if (error) return setErro(mensagemDoErro(error.message || error.hint))
+    onSaved()
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Trocar tamanho" width="max-w-lg">
+      <div className="space-y-3">
+        <div className="text-sm text-ink/60">
+          Pedido <b className="text-ink">{pedido.codigo || pedido.id}</b>
+          {pedido.cliente_nome ? <> · {pedido.cliente_nome}</> : null}
+        </div>
+
+        <Field label="Item do pedido">
+          <select className={inputCls} value={idx} onChange={(e) => { setIdx(Number(e.target.value)); setNovo(''); setErro(null) }}>
+            {itens.map((i, n) => (
+              <option key={n} value={n}>
+                {i.nome} · {i.tamanho || 'sem tamanho'} · {i.qtd} pç
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        {!prod ? (
+          <div className="bg-alerta/10 text-alerta text-sm rounded-md p-3">
+            Este item não está ligado a um produto do catálogo, então não dá para trocar a grade por aqui.
+          </div>
+        ) : (
+          <>
+            <Field label="Trocar para">
+              <select className={inputCls} value={novo} onChange={(e) => { setNovo(e.target.value); setErro(null) }}>
+                <option value="">Escolha a grade…</option>
+                {grades.filter((t) => t !== item.tamanho).map((t) => (
+                  <option key={t} value={t}>{t} — {num(estoqueDe(t))} em estoque</option>
+                ))}
+              </select>
+            </Field>
+
+            <div className="border border-borda rounded-md p-3 text-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-ink/50">Produto</span><b>{prod.nome}</b>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink/50">De</span>
+                <b>{item.tamanho || '—'} <span className="font-normal text-ink/45">({num(estoqueDe(item.tamanho))} em estoque)</span></b>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink/50">Para</span>
+                <b>{novo || '—'} {novo && <span className="font-normal text-ink/45">({num(estoqueDe(novo))} em estoque)</span>}</b>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink/50">Pares</span><b>{num(qtd)}</b>
+              </div>
+            </div>
+
+            <p className="text-xs text-ink/45">
+              {mexeEstoque
+                ? `O estoque deste pedido já saiu. Ao confirmar, ${qtd} par(es) voltam para o tamanho ${item.tamanho || '—'} e saem do tamanho ${novo || 'escolhido'}.`
+                : 'O estoque deste pedido ainda não saiu (pedido pendente ou cancelado). A troca só corrige o tamanho registrado, sem mexer no estoque.'}
+            </p>
+
+            {faltaEstoque && (
+              <div className="bg-sand/15 text-[#8a6b1c] text-sm rounded-md p-3">
+                O tamanho {novo} tem {num(estoqueDe(novo))} em estoque e o pedido precisa de {num(qtd)}. A troca vai ser recusada.
+              </div>
+            )}
+          </>
+        )}
+
+        {erro && <div className="bg-alerta/10 text-alerta text-sm rounded-md p-3">{erro}</div>}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button onClick={confirmar} disabled={!prod || !novo || salvando}>
+            {salvando ? 'Trocando…' : 'Confirmar troca'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   )
 }
