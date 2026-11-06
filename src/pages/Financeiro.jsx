@@ -124,10 +124,15 @@ function ContasPagar() {
   )
 }
 
+const RETIRADA_VAZIA = { data: hoje(), socio: '', valor: '', descricao: '', forma_pagamento: '', observacao: '' }
+
 function Retiradas() {
   const [rows, setRows] = useState([])
   const [open, setOpen] = useState(false)
-  const [f, setF] = useState({ data: hoje(), socio: '', valor: '', descricao: '', forma_pagamento: '', observacao: '' })
+  const [editandoId, setEditandoId] = useState(null)
+  const [f, setF] = useState(RETIRADA_VAZIA)
+  const [salvando, setSalvando] = useState(false)
+  const [erroForm, setErroForm] = useState(null)
 
   const [erro, setErro] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -140,12 +145,37 @@ function Retiradas() {
     })
   useEffect(() => { load() }, [])
 
-  const salvar = async () => {
-    if (!f.socio || !f.valor) return alert('Informe sócio e valor.')
-    const { error } = await supabase.from('retiradas_socios').insert({ ...f, valor: Number(f.valor) })
-    if (error) return alert(error.message)
-    setOpen(false); setF({ data: hoje(), socio: '', valor: '', descricao: '', forma_pagamento: '', observacao: '' }); load()
+  const abrirNova = () => {
+    setEditandoId(null); setF(RETIRADA_VAZIA); setErroForm(null); setOpen(true)
   }
+
+  const abrirEdicao = (r) => {
+    setEditandoId(r.id)
+    setF({
+      data: r.data || hoje(),
+      socio: r.socio || '',
+      valor: r.valor ?? '',
+      descricao: r.descricao || '',
+      forma_pagamento: r.forma_pagamento || '',
+      observacao: r.observacao || '',
+    })
+    setErroForm(null); setOpen(true)
+  }
+
+  const fechar = () => { setOpen(false); setEditandoId(null); setErroForm(null) }
+
+  const salvar = async () => {
+    if (!f.socio || !f.valor) return setErroForm('Informe sócio e valor.')
+    setErroForm(null); setSalvando(true)
+    const dados = { ...f, valor: Number(f.valor) }
+    const { error } = editandoId
+      ? await supabase.from('retiradas_socios').update(dados).eq('id', editandoId)
+      : await supabase.from('retiradas_socios').insert(dados)
+    setSalvando(false)
+    if (error) return setErroForm(error.message)
+    fechar(); setF(RETIRADA_VAZIA); load()
+  }
+
   const total = rows.reduce((s, r) => s + Number(r.valor), 0)
 
   return (
@@ -155,14 +185,15 @@ function Retiradas() {
         Retiradas ficam <b>fora</b> do cálculo de lucro e despesas — elas reduzem apenas o caixa disponível.
         Total retirado: <b className="tnum text-ink">{brl(total)}</b>
       </div>
-      <Card title="Retiradas dos sócios" right={<Button onClick={() => setOpen(true)}>Nova retirada</Button>}>
+      <Card title="Retiradas dos sócios" right={<Button onClick={abrirNova}>Nova retirada</Button>}>
         {loading ? <Empty>Carregando…</Empty> : rows.length === 0 ? (
           <Empty>Nenhuma retirada registrada.</Empty>
         ) : (
           <table className="w-full text-sm">
             <thead><tr className="text-left text-ink/45 text-xs border-b border-borda">
               <th className="py-2 pr-3">Data</th><th className="py-2 px-3">Sócio</th>
-              <th className="py-2 px-3">Motivo</th><th className="py-2 px-3">Forma</th><th className="py-2 px-3 text-right">Valor</th>
+              <th className="py-2 px-3">Motivo</th><th className="py-2 px-3">Forma</th>
+              <th className="py-2 px-3 text-right">Valor</th><th className="py-2 pl-3"></th>
             </tr></thead>
             <tbody>{rows.map((r) => (
               <tr key={r.id} className="border-b border-borda/50">
@@ -171,11 +202,17 @@ function Retiradas() {
                 <td className="py-2 px-3 text-ink/60">{r.descricao || '—'}</td>
                 <td className="py-2 px-3 text-ink/60">{r.forma_pagamento || '—'}</td>
                 <td className="py-2 px-3 text-right tnum">{brl(r.valor)}</td>
+                <td className="py-2 pl-3 text-right whitespace-nowrap">
+                  <button type="button" onClick={() => abrirEdicao(r)}
+                    className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5">
+                    Editar
+                  </button>
+                </td>
               </tr>
             ))}</tbody>
           </table>
         )}
-        <Modal open={open} onClose={() => setOpen(false)} title="Nova retirada">
+        <Modal open={open} onClose={fechar} title={editandoId ? 'Editar retirada' : 'Nova retirada'}>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Data"><input type="date" className={inputCls} value={f.data} onChange={(e) => setF({ ...f, data: e.target.value })} /></Field>
@@ -187,7 +224,17 @@ function Retiradas() {
             </div>
             <Field label="Motivo / descrição"><input className={inputCls} value={f.descricao} onChange={(e) => setF({ ...f, descricao: e.target.value })} /></Field>
             <Field label="Observação"><input className={inputCls} value={f.observacao} onChange={(e) => setF({ ...f, observacao: e.target.value })} /></Field>
-            <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={salvar}>Salvar</Button></div>
+            {editandoId && (
+              <p className="text-xs text-ink/45">
+                Alterar o valor muda o caixa disponível e a sugestão de retirada do Dashboard.
+                O lucro não é afetado — retirada nunca entrou nele.
+              </p>
+            )}
+            {erroForm && <div className="bg-alerta/10 text-alerta text-sm rounded-md p-3">{erroForm}</div>}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={fechar}>Cancelar</Button>
+              <Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando…' : 'Salvar'}</Button>
+            </div>
           </div>
         </Modal>
       </Card>
