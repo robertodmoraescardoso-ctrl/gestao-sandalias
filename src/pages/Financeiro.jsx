@@ -133,6 +133,8 @@ function Retiradas() {
   const [f, setF] = useState(RETIRADA_VAZIA)
   const [salvando, setSalvando] = useState(false)
   const [erroForm, setErroForm] = useState(null)
+  const [cancelando, setCancelando] = useState(null)
+  const [verCanceladas, setVerCanceladas] = useState(false)
 
   const [erro, setErro] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -145,9 +147,7 @@ function Retiradas() {
     })
   useEffect(() => { load() }, [])
 
-  const abrirNova = () => {
-    setEditandoId(null); setF(RETIRADA_VAZIA); setErroForm(null); setOpen(true)
-  }
+  const abrirNova = () => { setEditandoId(null); setF(RETIRADA_VAZIA); setErroForm(null); setOpen(true) }
 
   const abrirEdicao = (r) => {
     setEditandoId(r.id)
@@ -176,7 +176,18 @@ function Retiradas() {
     fechar(); setF(RETIRADA_VAZIA); load()
   }
 
-  const total = rows.reduce((s, r) => s + Number(r.valor), 0)
+  const reativar = async (r) => {
+    if (!confirm(`Reativar a retirada de ${brl(r.valor)} de ${r.socio}? Ela volta a contar no caixa.`)) return
+    const { error } = await supabase.from('retiradas_socios')
+      .update({ cancelada: false, cancelada_em: null, cancelada_motivo: null }).eq('id', r.id)
+    if (error) return alert(error.message)
+    load()
+  }
+
+  const ativas = rows.filter((r) => !r.cancelada)
+  const canceladas = rows.filter((r) => r.cancelada)
+  const visiveis = verCanceladas ? rows : ativas
+  const total = ativas.reduce((s, r) => s + Number(r.valor), 0)
 
   return (
     <>
@@ -184,9 +195,22 @@ function Retiradas() {
       <div className="bg-white border border-borda rounded-md p-3 mb-6 text-sm text-ink/60">
         Retiradas ficam <b>fora</b> do cálculo de lucro e despesas — elas reduzem apenas o caixa disponível.
         Total retirado: <b className="tnum text-ink">{brl(total)}</b>
+        {canceladas.length > 0 && (
+          <> · {canceladas.length} cancelada{canceladas.length > 1 ? 's' : ''}, fora desse total</>
+        )}
       </div>
-      <Card title="Retiradas dos sócios" right={<Button onClick={abrirNova}>Nova retirada</Button>}>
-        {loading ? <Empty>Carregando…</Empty> : rows.length === 0 ? (
+      <Card title="Retiradas dos sócios" right={
+        <div className="flex items-center gap-3">
+          {canceladas.length > 0 && (
+            <label className="text-xs text-ink/60 flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={verCanceladas} onChange={(e) => setVerCanceladas(e.target.checked)} />
+              Mostrar canceladas
+            </label>
+          )}
+          <Button onClick={abrirNova}>Nova retirada</Button>
+        </div>
+      }>
+        {loading ? <Empty>Carregando…</Empty> : visiveis.length === 0 ? (
           <Empty>Nenhuma retirada registrada.</Empty>
         ) : (
           <table className="w-full text-sm">
@@ -195,18 +219,39 @@ function Retiradas() {
               <th className="py-2 px-3">Motivo</th><th className="py-2 px-3">Forma</th>
               <th className="py-2 px-3 text-right">Valor</th><th className="py-2 pl-3"></th>
             </tr></thead>
-            <tbody>{rows.map((r) => (
-              <tr key={r.id} className="border-b border-borda/50">
+            <tbody>{visiveis.map((r) => (
+              <tr key={r.id} className={'border-b border-borda/50' + (r.cancelada ? ' text-ink/35' : '')}>
                 <td className="py-2 pr-3 text-ink/60">{dataBR(r.data)}</td>
-                <td className="py-2 px-3 font-medium">{r.socio}</td>
-                <td className="py-2 px-3 text-ink/60">{r.descricao || '—'}</td>
+                <td className={'py-2 px-3' + (r.cancelada ? ' line-through' : ' font-medium')}>{r.socio}</td>
+                <td className="py-2 px-3 text-ink/60">
+                  <span className={r.cancelada ? 'line-through' : ''}>{r.descricao || '—'}</span>
+                  {r.cancelada && (
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <Badge tone="vermelho">cancelada</Badge>
+                      {r.cancelada_motivo && <span className="text-[11px] text-ink/45">{r.cancelada_motivo}</span>}
+                    </div>
+                  )}
+                </td>
                 <td className="py-2 px-3 text-ink/60">{r.forma_pagamento || '—'}</td>
-                <td className="py-2 px-3 text-right tnum">{brl(r.valor)}</td>
+                <td className={'py-2 px-3 text-right tnum' + (r.cancelada ? ' line-through' : '')}>{brl(r.valor)}</td>
                 <td className="py-2 pl-3 text-right whitespace-nowrap">
-                  <button type="button" onClick={() => abrirEdicao(r)}
-                    className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5">
-                    Editar
-                  </button>
+                  {r.cancelada ? (
+                    <button type="button" onClick={() => reativar(r)}
+                      className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5">
+                      Reativar
+                    </button>
+                  ) : (
+                    <>
+                      <button type="button" onClick={() => abrirEdicao(r)}
+                        className="text-xs font-medium text-ink/70 hover:text-ink px-2 py-1 rounded hover:bg-ink/5 mr-1">
+                        Editar
+                      </button>
+                      <button type="button" onClick={() => setCancelando(r)}
+                        className="text-xs font-medium text-ink/70 hover:text-alerta px-2 py-1 rounded hover:bg-alerta/5">
+                        Cancelar
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}</tbody>
@@ -238,7 +283,67 @@ function Retiradas() {
           </div>
         </Modal>
       </Card>
+
+      {cancelando && (
+        <CancelarRetirada retirada={cancelando}
+          onClose={() => setCancelando(null)}
+          onSaved={() => { setCancelando(null); load() }} />
+      )}
     </>
+  )
+}
+
+/* Cancelamento, nao exclusao. A linha fica no banco com cancelada = true, sai
+   do total da tela e deixa de contar na fn_dashboard e na fn_sugestao_retirada
+   (migracao 0007). Regra 8: dinheiro que saiu do caixa nao se apaga, se estorna. */
+function CancelarRetirada({ retirada, onClose, onSaved }) {
+  const [motivo, setMotivo] = useState('')
+  const [salvando, setSalvando] = useState(false)
+  const [erro, setErro] = useState(null)
+
+  const confirmar = async () => {
+    setErro(null); setSalvando(true)
+    const { error } = await supabase.from('retiradas_socios').update({
+      cancelada: true,
+      cancelada_em: new Date().toISOString(),
+      cancelada_motivo: motivo.trim() || null,
+    }).eq('id', retirada.id)
+    setSalvando(false)
+    if (error) {
+      return setErro(/cancelada/i.test(error.message)
+        ? 'A coluna de cancelamento ainda não existe no banco. Rode a migração 0007_cancelar_retirada.sql no SQL Editor do Supabase.'
+        : error.message)
+    }
+    onSaved()
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Cancelar retirada">
+      <div className="space-y-3">
+        <div className="border border-borda rounded-md p-3 text-sm space-y-1">
+          <div className="flex justify-between"><span className="text-ink/50">Data</span><b>{dataBR(retirada.data)}</b></div>
+          <div className="flex justify-between"><span className="text-ink/50">Sócio</span><b>{retirada.socio}</b></div>
+          <div className="flex justify-between"><span className="text-ink/50">Valor</span><b className="tnum">{brl(retirada.valor)}</b></div>
+        </div>
+
+        <Field label="Por que está cancelando?">
+          <input className={inputCls} value={motivo} onChange={(e) => setMotivo(e.target.value)}
+            placeholder="Ex.: lançada em duplicidade" />
+        </Field>
+
+        <p className="text-xs text-ink/45">
+          A retirada não é apagada: ela fica registrada como cancelada, com a data e o motivo, e
+          deixa de contar no caixa e na sugestão de retirada. Dá para reativar depois.
+        </p>
+
+        {erro && <div className="bg-alerta/10 text-alerta text-sm rounded-md p-3">{erro}</div>}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Voltar</Button>
+          <Button onClick={confirmar} disabled={salvando}>{salvando ? 'Cancelando…' : 'Confirmar cancelamento'}</Button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 
